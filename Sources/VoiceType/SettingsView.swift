@@ -2,38 +2,67 @@ import AppKit
 import SwiftUI
 import KeyboardShortcuts
 
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case vocabulary
+    case history
+    case about
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .general: return "General"
+        case .vocabulary: return "Vocabulary"
+        case .history: return "History"
+        case .about: return "About"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: return "gear"
+        case .vocabulary: return "book"
+        case .history: return "clock.arrow.circlepath"
+        case .about: return "info.circle"
+        }
+    }
+}
+
 struct SettingsView: View {
-    @State private var selectedTab: Int
+    @State private var selectedSection: SettingsSection
     var glossaryStore: GlossaryStore
     var historyStore: HistoryStore
 
-    init(glossaryStore: GlossaryStore, historyStore: HistoryStore, initialTab: Int = 0) {
+    init(glossaryStore: GlossaryStore, historyStore: HistoryStore, initialSection: SettingsSection = .general) {
         self.glossaryStore = glossaryStore
         self.historyStore = historyStore
-        self._selectedTab = State(initialValue: initialTab)
+        self._selectedSection = State(initialValue: initialSection)
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            GeneralSettingsTab(historyStore: historyStore)
-                .tabItem {
-                    Label("General", systemImage: "gear")
+        NavigationSplitView {
+            List(SettingsSection.allCases, selection: $selectedSection) { section in
+                Label(section.label, systemImage: section.icon)
+                    .tag(section)
+            }
+            .navigationSplitViewColumnWidth(min: 160, ideal: 180)
+        } detail: {
+            Group {
+                switch selectedSection {
+                case .general:
+                    GeneralSettingsTab(historyStore: historyStore)
+                case .vocabulary:
+                    VocabularySettingsTab(glossaryStore: glossaryStore)
+                case .history:
+                    HistorySettingsTab(historyStore: historyStore)
+                case .about:
+                    AboutSettingsTab()
                 }
-                .tag(0)
-
-            VocabularySettingsTab(glossaryStore: glossaryStore)
-                .tabItem {
-                    Label("Vocabulary", systemImage: "book")
-                }
-                .tag(1)
-
-            HistorySettingsTab(historyStore: historyStore)
-                .tabItem {
-                    Label("History", systemImage: "clock.arrow.circlepath")
-                }
-                .tag(2)
+            }
+            .navigationTitle(selectedSection.label)
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .frame(minWidth: 640, minHeight: 420)
     }
 }
 
@@ -41,45 +70,104 @@ struct GeneralSettingsTab: View {
     var historyStore: HistoryStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Form {
-                Section(header: Text("Hotkey")) {
-                    KeyboardShortcuts.Recorder("Record hotkey:", name: .toggleRecording)
+        Form {
+            Section(header: Text("Hotkey")) {
+                KeyboardShortcuts.Recorder("Record hotkey:", name: .toggleRecording)
+            }
+
+            Section(header: Text("Apple Intelligence")) {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(Enhancer.isAvailable ? Color.green : Color.red)
+                        .frame(width: 10, height: 10)
+
+                    Text(Enhancer.isAvailable ? "Available" : "Unavailable")
+                        .foregroundColor(Enhancer.isAvailable ? .green : .red)
+
+                    Spacer()
                 }
+                .padding(.vertical, 4)
+            }
 
-                Section(header: Text("Apple Intelligence")) {
-                    HStack(spacing: 12) {
-                        Circle()
-                            .fill(Enhancer.isAvailable ? Color.green : Color.red)
-                            .frame(width: 10, height: 10)
-
-                        Text(Enhancer.isAvailable ? "Available" : "Unavailable")
-                            .foregroundColor(Enhancer.isAvailable ? .green : .red)
-
-                        Spacer()
+            Section(header: Text("Storage"), footer: Text("Transcripts and recordings are saved here.").font(.caption).foregroundColor(.secondary)) {
+                HStack {
+                    Text(historyStore.baseDir.path)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([historyStore.baseDir])
                     }
-                    .padding(.vertical, 8)
                 }
+                .padding(.vertical, 2)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
 
-                Section(header: Text("Storage")) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Transcripts and recordings are saved to:")
+private struct Acknowledgment: Identifiable {
+    let id = UUID()
+    let name: String
+    let purpose: String
+    let url: String
+}
+
+struct AboutSettingsTab: View {
+    private static let acknowledgments: [Acknowledgment] = [
+        Acknowledgment(name: "FluidAudio", purpose: "On-device speech recognition (Parakeet model)", url: "https://github.com/FluidInference/FluidAudio"),
+        Acknowledgment(name: "KeyboardShortcuts", purpose: "Global hotkey recording and handling", url: "https://github.com/sindresorhus/KeyboardShortcuts")
+    ]
+
+    private var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+
+    private var build: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("VoiceType")
+                        .font(.title2.bold())
+                    Text("Version \(version) (\(build))")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section(header: Text("Open Source Acknowledgments")) {
+                ForEach(Self.acknowledgments) { item in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name)
+                            .font(.body.weight(.medium))
+                        Text(item.purpose)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text(historyStore.baseDir.path)
+                        Text(item.url)
                             .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.accentColor)
                             .textSelection(.enabled)
-                        Button("Show in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([historyStore.baseDir])
-                        }
                     }
                     .padding(.vertical, 4)
                 }
             }
 
-            Spacer()
+            Section(header: Text("License")) {
+                Text("VoiceType is provided as-is, with no warranty of any kind. Third-party components above are used under their respective open-source licenses — see each project's repository for full license terms.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 4)
+            }
         }
-        .padding(20)
+        .formStyle(.grouped)
     }
 }
 
@@ -186,6 +274,22 @@ struct HistorySettingsTab: View {
     var historyStore: HistoryStore
 
     @State private var selectedEntryID: UUID?
+    @State private var searchText = ""
+    @State private var showingRawInDetail = false
+
+    var filteredEntries: [HistoryEntry] {
+        if searchText.isEmpty {
+            return historyStore.entries
+        }
+        return historyStore.entries.filter { entry in
+            entry.rawTranscript.localizedCaseInsensitiveContains(searchText) ||
+            entry.polishedTranscript.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var selectedEntry: HistoryEntry? {
+        filteredEntries.first { $0.id == selectedEntryID }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -213,11 +317,91 @@ struct HistorySettingsTab: View {
                     .foregroundColor(.secondary)
                 Spacer()
             } else {
-                List(selection: $selectedEntryID) {
-                    ForEach(historyStore.entries) { entry in
-                        HistoryRow(entry: entry, historyStore: historyStore)
-                            .tag(entry.id)
+                HStack(spacing: 0) {
+                    // Master column: list of entries
+                    VStack(spacing: 0) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(.secondary)
+                            TextField("Search transcripts", text: $searchText)
+                                .textFieldStyle(.plain)
+                        }
+                        .padding(8)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .cornerRadius(6)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+
+                        List(selection: $selectedEntryID) {
+                            ForEach(filteredEntries) { entry in
+                                HistoryRow(entry: entry, historyStore: historyStore)
+                                    .tag(entry.id)
+                            }
+                        }
                     }
+                    .frame(minWidth: 250)
+
+                    Divider()
+
+                    // Detail column: full transcript view
+                    VStack(spacing: 12) {
+                        if let entry = selectedEntry {
+                            HStack(spacing: 8) {
+                                Button(action: { showingRawInDetail = false }) {
+                                    Text("Polished")
+                                        .font(.caption)
+                                        .padding(.vertical, 4)
+                                        .padding(.horizontal, 8)
+                                        .background(showingRawInDetail ? Color.clear : Color(nsColor: .controlBackgroundColor))
+                                        .cornerRadius(4)
+                                }
+                                .buttonStyle(.plain)
+
+                                Button(action: { showingRawInDetail = true }) {
+                                    Text("Raw")
+                                        .font(.caption)
+                                        .padding(.vertical, 4)
+                                        .padding(.horizontal, 8)
+                                        .background(showingRawInDetail ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+                                        .cornerRadius(4)
+                                }
+                                .buttonStyle(.plain)
+
+                                Spacer()
+                            }
+
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    let displayText = showingRawInDetail ? entry.rawTranscript : entry.polishedTranscript
+                                    Text(displayText.isEmpty ? "(no speech detected)" : displayText)
+                                        .font(.body)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        } else {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "arrow.left")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                                Text("Select an entry to view details")
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .padding(12)
+                }
+            }
+        }
+        .onChange(of: selectedEntryID) { oldID, newID in
+            if let entry = selectedEntry {
+                if entry.polishedTranscript.isEmpty && !entry.rawTranscript.isEmpty {
+                    showingRawInDetail = true
+                } else {
+                    showingRawInDetail = false
                 }
             }
         }

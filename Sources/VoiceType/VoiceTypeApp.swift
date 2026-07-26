@@ -1,6 +1,7 @@
 import SwiftUI
 import KeyboardShortcuts
 import OSLog
+import AVFoundation
 
 @main
 struct VoiceTypeApp: App {
@@ -49,11 +50,11 @@ struct VoiceTypeApp: App {
 
     private var menuBarIcon: String {
         if appState.isRecording {
-            return "mic.fill"
+            return "waveform.circle.fill"
         } else if appState.isProcessing {
             return "arrow.triangle.2.circlepath"
         } else {
-            return "mic"
+            return "waveform"
         }
     }
 
@@ -242,9 +243,9 @@ struct VoiceTypeApp: App {
         recordingTimer = nil
     }
 
-    private func openSettings(initialTab: Int = 0) {
+    private func openSettings(section: SettingsSection = .general) {
         if settingsWindow == nil {
-            let settingsView = SettingsView(glossaryStore: glossaryStore, historyStore: historyStore, initialTab: initialTab)
+            let settingsView = SettingsView(glossaryStore: glossaryStore, historyStore: historyStore, initialSection: section)
             let hostingController = NSHostingController(rootView: settingsView)
             let window = NSWindow(contentViewController: hostingController)
             window.title = "VoiceType Settings"
@@ -256,7 +257,7 @@ struct VoiceTypeApp: App {
     }
 
     private func openHistory() {
-        openSettings(initialTab: 2)
+        openSettings(section: .history)
     }
 }
 
@@ -266,21 +267,78 @@ struct VoiceTypeMenuView: View {
     var onShowHistory: () -> Void
     var onToggleRecording: () -> Void
 
+    @State private var recordingRowHovering = false
+    @State private var historyRowHovering = false
+    @State private var settingsRowHovering = false
+    @State private var quitRowHovering = false
+
+    private var recordingHotkeyHint: String {
+        if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
+            return shortcut.description
+        }
+        return ""
+    }
+
+    private var micDeviceName: String {
+        AVCaptureDevice.default(for: .audio)?.localizedName ?? "No microphone"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("VoiceType")
-                .font(.system(.headline))
-                .padding(.vertical, 8)
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.vertical, 6)
                 .padding(.horizontal, 12)
 
             Divider()
 
+            // Start/Stop Recording button
             Button(action: onToggleRecording) {
                 HStack {
                     Text(appState.isRecording ? "Stop Recording" : "Start Recording")
+                        .font(.system(size: 13))
                     Spacer()
-                    Text("⌘⇧D")
-                        .font(.system(.caption, design: .monospaced))
+                    if !recordingHotkeyHint.isEmpty {
+                        Text(recordingHotkeyHint)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .background(recordingRowHovering ? Color.gray.opacity(0.15) : Color.clear)
+            .onHover { hovering in
+                recordingRowHovering = hovering
+            }
+
+            // History button
+            Button(action: onShowHistory) {
+                HStack {
+                    Text("History…")
+                        .font(.system(size: 13))
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .background(historyRowHovering ? Color.gray.opacity(0.15) : Color.clear)
+            .onHover { hovering in
+                historyRowHovering = hovering
+            }
+
+            // Settings button
+            Button(action: onSettings) {
+                HStack {
+                    Text("Settings…")
+                        .font(.system(size: 13))
+                    Spacer()
+                    Text("⌘,")
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
                 .contentShape(Rectangle())
@@ -288,43 +346,49 @@ struct VoiceTypeMenuView: View {
             .buttonStyle(.plain)
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
-
-            Button(action: onShowHistory) {
-                HStack {
-                    Text("History…")
-                    Spacer()
-                }
-                .contentShape(Rectangle())
+            .background(settingsRowHovering ? Color.gray.opacity(0.15) : Color.clear)
+            .onHover { hovering in
+                settingsRowHovering = hovering
             }
-            .buttonStyle(.plain)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 12)
 
-            Button(action: onSettings) {
-                HStack {
-                    Text("Settings…")
-                    Spacer()
-                }
-                .contentShape(Rectangle())
+            Divider()
+
+            // Microphone info row (non-interactive)
+            HStack(spacing: 6) {
+                Text(micDeviceName)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Image(systemName: "mic")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
             }
-            .buttonStyle(.plain)
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
 
             Divider()
 
+            // Quit button
             Button(action: {
                 NSApplication.shared.terminate(nil)
             }) {
                 HStack {
                     Text("Quit")
+                        .font(.system(size: 13))
                     Spacer()
+                    Text("⌘Q")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
+            .background(quitRowHovering ? Color.gray.opacity(0.15) : Color.clear)
+            .onHover { hovering in
+                quitRowHovering = hovering
+            }
         }
         .frame(minWidth: 200)
     }

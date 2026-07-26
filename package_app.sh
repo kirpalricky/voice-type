@@ -6,7 +6,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 OUT_DIR="${1:-$HOME/Downloads}"
-APP="$OUT_DIR/VoiceType.app"
+PLIST=Sources/VoiceType/Resources/Info.plist
+VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST")
+
+# Auto-bump the build number every time so each packaged app is a distinct,
+# non-overwriting file — otherwise VERSION never changes and this would just
+# clobber the same VoiceType.<VERSION>.app on every run.
+BUILD=$(( $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST") + 1 ))
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$PLIST"
+
+APP="$OUT_DIR/VoiceType.$VERSION.$BUILD.app"
 ARCH_DIR=".build/arm64-apple-macosx/release"
 
 swift build -c release
