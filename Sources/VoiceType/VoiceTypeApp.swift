@@ -77,6 +77,13 @@ struct VoiceTypeApp: App {
     }
 
     private func startRecording() async {
+        guard await hasMicrophoneAccess() else {
+            os_log("Microphone access not granted", log: self.logger, type: .error)
+            appState.processingError = "Microphone access is required. Enable it in System Settings > Privacy & Security > Microphone."
+            appState.showingResultPanel = true
+            return
+        }
+
         do {
             appState.isRecording = true
             appState.processingError = nil
@@ -94,6 +101,32 @@ struct VoiceTypeApp: App {
         }
     }
 
+    /// Ensures the microphone TCC prompt (if any) is fully resolved before the audio engine
+    /// starts. Starting the engine while a permission dialog is still pending races the OS
+    /// grant and silently captures nothing for the whole recording.
+    private func hasMicrophoneAccess() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            let granted = await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+            if granted {
+                // The HAL input route isn't always live the instant the TCC prompt resolves;
+                // give it a moment before the caller starts the engine.
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+            return granted
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
     private func stopRecordingAndTranscribe() async {
         do {
             // Stop recording and get audio samples
@@ -102,8 +135,9 @@ struct VoiceTypeApp: App {
             appState.audioLevel = 0
 
             guard !audioSamples.isEmpty else {
-                os_log("No audio samples captured", log: self.logger, type: .default)
-                appState.showingResultPanel = false
+                os_log("No audio samples captured", log: self.logger, type: .error)
+                appState.processingError = "No audio was captured. Check your microphone and try again."
+                appState.showingResultPanel = true
                 return
             }
 

@@ -9,6 +9,7 @@ actor AudioRecorder {
     private var audioBuffer: [Float] = []
     private let targetSampleRate: Int = 16000
     private var onLevel: (@Sendable (Float) -> Void)?
+    private var hasReceivedFirstBuffer = false
 
     /// Initialize the audio recorder
     init() {}
@@ -21,13 +22,14 @@ actor AudioRecorder {
     /// stop/start cycles intermittently throws an uncaught "format mismatch" exception from
     /// `installTap` (the previously connected/reset node's cached format can go stale), which
     /// crashes the whole app.
-    func startRecording(onLevel: (@Sendable (Float) -> Void)? = nil) throws {
+    func startRecording(onLevel: (@Sendable (Float) -> Void)? = nil) async throws {
         let engine = AVAudioEngine()
         self.audioEngine = engine
         self.onLevel = onLevel
+        self.hasReceivedFirstBuffer = false
 
         let inputNode = engine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
+        let format = inputNode.inputFormat(forBus: 0)
 
         // Clear previous audio
         audioBuffer.removeAll()
@@ -45,6 +47,25 @@ actor AudioRecorder {
 
         // Start the audio engine
         try engine.start()
+
+        // Fresh engine/input-node setup — especially right after a mic-permission prompt
+        // resolves, or moments after app launch — can leave the HAL input route silent for
+        // a stretch after engine.start() returns, so the tap never actually delivers a
+        // buffer for the whole recording. Confirm real data is flowing before returning;
+        // if it never arrives, fail fast here rather than after the user finishes talking
+        // into a dead mic.
+        var attempts = 0
+        while !hasReceivedFirstBuffer && attempts < 10 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            attempts += 1
+        }
+        guard hasReceivedFirstBuffer else {
+            inputNode.removeTap(onBus: 0)
+            engine.stop()
+            self.audioEngine = nil
+            self.onLevel = nil
+            throw AudioRecorderError.formatNotAvailable
+        }
 
         os_log("Audio recording started", log: self.logger, type: .info)
     }
@@ -73,6 +94,8 @@ actor AudioRecorder {
         guard let channelData = buffer.floatChannelData else {
             return
         }
+
+        hasReceivedFirstBuffer = true
 
         let frameLength = Int(buffer.frameLength)
         let inputSampleRate = Int(buffer.format.sampleRate)
@@ -145,7 +168,7 @@ enum AudioRecorderError: LocalizedError {
         case .engineNotInitialized:
             return "Audio engine not initialized"
         case .formatNotAvailable:
-            return "Audio format not available"
+            return "Microphone isn't delivering audio right now"
         case .recordingFailed(let message):
             return "Recording failed: \(message)"
         }
