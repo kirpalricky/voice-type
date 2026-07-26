@@ -13,7 +13,7 @@ final class AppState {
     var statusMessage: String = ""
     var processingError: String?
     var audioLevel: Float = 0
-    var levelHistory: [Float] = Array(repeating: 0, count: 128)
+    var levelHistory: [Float] = Array(repeating: 0, count: 48)
 
     func pushLevel(_ level: Float) {
         audioLevel = level
