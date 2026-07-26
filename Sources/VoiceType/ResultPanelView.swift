@@ -62,25 +62,86 @@ struct ResultPanelView: View {
         .onAppear {
             isBlinking = true
         }
+        .task(id: appState.isRecording) {
+            // Paces the per-band envelope at a fixed cadence, decoupled from the audio tap's
+            // own ~100ms buffer jitter, so bars advance evenly instead of in uneven bursts.
+            guard appState.isRecording else { return }
+            while !Task.isCancelled {
+                appState.pushLevel()
+                try? await Task.sleep(nanoseconds: 33_000_000) // ~30fps
+            }
+        }
     }
 
-    /// Live bar-graph of recent input levels so the user can see whether their voice is being picked up.
+    /// Live standing-wave meter: bars sit at fixed positions and pulse in place, each driven
+    /// by its own real FFT frequency band (see `AudioRecorder.computeBands`) rather than a
+    /// scrolling strip chart or one scalar fanned out to every bar — both were tried and
+    /// rejected (frozen bars sliding left; a wave visibly radiating from the center; all
+    /// bars moving in an undifferentiated block). Real per-band data gives each bar
+    /// independent motion with no scroll and no directional propagation. A fading echo of
+    /// the shape from ~200ms ago is drawn underneath for extra depth. Single Canvas pass —
+    /// no per-view identity, no animation modifiers (both caused a "wiggle" bug earlier);
+    /// bar positions/widths are pixel-snapped (fractional edges caused a Moiré bug earlier).
     private var levelMeter: some View {
-        GeometryReader { geo in
-            let barCount = appState.levelHistory.count
-            let spacing: CGFloat = 3
-            let barWidth = max((geo.size.width - CGFloat(barCount - 1) * spacing) / CGFloat(barCount), 1)
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                let barCount = appState.barLevels.count
+                guard barCount > 0 else { return }
 
-            HStack(alignment: .center, spacing: spacing) {
-                ForEach(Array(appState.levelHistory.enumerated()), id: \.offset) { _, level in
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.white.opacity(0.85))
-                        .frame(width: barWidth, height: max(CGFloat(level) * geo.size.height, 2))
+                let spacing: CGFloat = 4
+                let slot = size.width / CGFloat(barCount)
+                let baseBarWidth = max((slot - spacing).rounded(), 1)
+                let midY = size.height / 2
+                let mid = CGFloat(barCount - 1) / 2
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                let pulse = 0.5 + 0.5 * sin(t * 2.2)
+
+                func draw(_ levels: [Float], opacityScale: CGFloat, glow: Bool) {
+                    for (index, level) in levels.enumerated() {
+                        let lvl = CGFloat(level)
+
+                        // Idle floor: a slow global pulse plus per-bar jitter so silence still
+                        // feels alive instead of collapsing to a dead flat line.
+                        let jitter = 0.5 + 0.5 * sin(t * 3 + Double(index) * 0.9)
+                        let idleFloor = 3 + 4 * CGFloat(pulse) + 3 * CGFloat(jitter)
+                        let height = max(lvl * size.height, idleFloor)
+
+                        // Brightness tracks amplitude (loud = bright white, quiet = dim) with
+                        // a gentle center-favoring fade so the row isn't uniformly flat. A
+                        // gamma curve on `lvl` pushes quiet/mid bars down harder than a
+                        // linear map would, widening the perceived loud/quiet contrast while
+                        // the floor keeps quiet bars dim but still visibly present.
+                        let posFade = 1 - pow(abs(CGFloat(index) - mid) / max(mid, 1), 1.6) * 0.35
+                        let shaped = pow(lvl, 1.4)
+                        let opacity = (0.22 + 0.78 * shaped) * posFade * opacityScale
+
+                        // Static per-index width profile breaks the grid-like uniformity
+                        // without jittering width frame-to-frame (which reads as noise, not
+                        // organic variation).
+                        let widthScale = 0.7 + 0.6 * abs(sin(Double(index) * 1.7))
+                        let barWidth = max((baseBarWidth * CGFloat(widthScale)).rounded(), 1)
+
+                        let slotCenter = (CGFloat(index) + 0.5) * slot
+                        let x = (slotCenter - barWidth / 2).rounded()
+                        let rect = CGRect(x: x, y: midY - height / 2, width: barWidth, height: height)
+                        let path = Path(roundedRect: rect, cornerRadius: barWidth / 2)
+
+                        if glow {
+                            let glowRect = rect.insetBy(dx: -1.5, dy: -1.5)
+                            context.fill(
+                                Path(roundedRect: glowRect, cornerRadius: barWidth / 2 + 1.5),
+                                with: .color(.white.opacity(opacity * 0.18))
+                            )
+                        }
+                        context.fill(path, with: .color(.white.opacity(opacity)))
+                    }
                 }
+
+                draw(appState.echoBarLevels, opacityScale: 0.35, glow: false)
+                draw(appState.barLevels, opacityScale: 1.0, glow: true)
             }
-            .frame(maxHeight: .infinity, alignment: .center)
         }
-        .frame(height: 34)
+        .frame(height: 100)
     }
 
     private var processingView: some View {
