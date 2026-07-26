@@ -87,10 +87,10 @@ struct VoiceTypeApp: App {
         do {
             appState.isRecording = true
             appState.processingError = nil
-            appState.levelHistory = Array(repeating: 0, count: appState.levelHistory.count)
-            try await audioRecorder.startRecording(onLevel: { [appState] level in
+            appState.resetLevels()
+            try await audioRecorder.startRecording(onBands: { [appState] bands in
                 Task { @MainActor in
-                    appState.pushLevel(level)
+                    appState.latestBands = bands
                 }
             })
         } catch {
@@ -127,12 +127,32 @@ struct VoiceTypeApp: App {
         }
     }
 
+    /// Races `operation` against cooperative cancellation of the current task. `Transcriber`
+    /// and `Enhancer` don't check `Task.isCancelled` internally, so awaiting them directly
+    /// means a Cancel click has no visible effect until the call finishes on its own (most
+    /// noticeable during the multi-second Foundation Models polish step). Polling cancellation
+    /// on a sibling task lets us abandon the wait within ~100ms instead.
+    private func cancellable<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            group.addTask {
+                while !Task.isCancelled {
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                }
+                throw CancellationError()
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
+    }
+
     private func stopRecordingAndTranscribe() async {
         do {
             // Stop recording and get audio samples
             let audioSamples = try await audioRecorder.stopRecording()
             appState.isRecording = false
-            appState.audioLevel = 0
 
             guard !audioSamples.isEmpty else {
                 os_log("No audio samples captured", log: self.logger, type: .error)
@@ -150,16 +170,20 @@ struct VoiceTypeApp: App {
 
             // Initialize model on first use
             appState.statusMessage = "Loading speech model…"
-            try await transcriber.initialize(onProgress: { [appState] status in
-                Task { @MainActor in
-                    appState.statusMessage = status
-                }
-            })
+            try await cancellable { [transcriber, appState] in
+                try await transcriber.initialize(onProgress: { status in
+                    Task { @MainActor in
+                        appState.statusMessage = status
+                    }
+                })
+            }
             try Task.checkCancellation()
 
             // Transcribe audio
             appState.statusMessage = "Transcribing…"
-            let rawTranscript = try await transcriber.transcribe(audioSamples)
+            let rawTranscript = try await cancellable { [transcriber] in
+                try await transcriber.transcribe(audioSamples)
+            }
             try Task.checkCancellation()
             appState.rawTranscript = rawTranscript
             print("RAW: \(rawTranscript)")
@@ -183,7 +207,9 @@ struct VoiceTypeApp: App {
                 }
             }
             appState.statusMessage = "Polishing transcript…"
-            let polishedTranscript = try await Enhancer.polish(afterFuzzyMatch, glossary: glossaryStrings)
+            let polishedTranscript = try await cancellable {
+                try await Enhancer.polish(afterFuzzyMatch, glossary: glossaryStrings)
+            }
             try Task.checkCancellation()
             appState.polishedTranscript = polishedTranscript
             print("POLISHED: \(polishedTranscript)")
@@ -209,6 +235,11 @@ struct VoiceTypeApp: App {
             appState.isRecording = false
             appState.isProcessing = false
             appState.showingResultPanel = false
+            // `showingResultPanel` may already be false here (the panel was opened via the
+            // isRecording->showResultPanel path, not this flag), so the onChange that would
+            // normally hide the window never fires. Hide it directly so cancelling doesn't
+            // leave a blank panel on screen.
+            resultPanelWindow?.hide()
         } catch {
             os_log("Transcription error: %@", log: self.logger, type: .error, error.localizedDescription)
             appState.isRecording = false
