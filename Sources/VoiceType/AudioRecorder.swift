@@ -35,7 +35,7 @@ actor AudioRecorder {
         // Attach audio tap to input node to capture audio
         inputNode.installTap(
             onBus: 0,
-            bufferSize: AVAudioFrameCount(format.sampleRate * 0.1), // 100ms buffers
+            bufferSize: AVAudioFrameCount(format.sampleRate * 0.05), // 50ms buffers
             format: format
         ) { [weak self] buffer, _ in
             Task {

@@ -68,19 +68,20 @@ struct ResultPanelView: View {
     private var levelMeter: some View {
         GeometryReader { geo in
             let barCount = appState.levelHistory.count
-            let spacing: CGFloat = 3
+            let spacing: CGFloat = 2
             let barWidth = max((geo.size.width - CGFloat(barCount - 1) * spacing) / CGFloat(barCount), 1)
 
             HStack(alignment: .center, spacing: spacing) {
                 ForEach(Array(appState.levelHistory.enumerated()), id: \.offset) { _, level in
-                    RoundedRectangle(cornerRadius: 1)
+                    RoundedRectangle(cornerRadius: barWidth / 2)
                         .fill(Color.white.opacity(0.85))
-                        .frame(width: barWidth, height: max(CGFloat(level) * geo.size.height, 2))
+                        .frame(width: barWidth, height: max(CGFloat(level) * geo.size.height, 3))
+                        .animation(.easeOut(duration: 0.12), value: level)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .center)
         }
-        .frame(height: 34)
+        .frame(height: 100)
     }
 
     private var processingView: some View {
