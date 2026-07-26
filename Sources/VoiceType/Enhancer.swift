@@ -55,7 +55,7 @@ struct Enhancer {
             Input: "super whisper is really powerful"
             Output: "SuperWhisper is really powerful."
 
-            Now polish the following transcript, applying the same corrections:
+            Now polish the following transcript, applying the same corrections. Output ONLY the polished transcript text itself — no preamble, no "Here is the corrected transcript:", no quotation marks wrapping the result, no commentary of any kind.
             """
 
             let session = LanguageModelSession(
@@ -64,10 +64,22 @@ struct Enhancer {
             )
 
             let response = try await session.respond(to: rawTranscript)
-            return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return Self.stripPreamble(response.content.trimmingCharacters(in: .whitespacesAndNewlines))
         } else {
             // Fallback for systems without Foundation Models
             return rawTranscript
         }
+    }
+
+    /// Removes a leading conversational preamble line if the model ignored instructions
+    /// and prefixed its answer with something like "Sure, here is the corrected transcript:"
+    private static func stripPreamble(_ text: String) -> String {
+        guard let firstLineRange = text.range(of: "\n") else { return text }
+        let firstLine = text[text.startIndex..<firstLineRange.lowerBound].lowercased()
+        let preambleMarkers = ["here is", "here's", "sure,", "corrected transcript", "polished transcript"]
+        if preambleMarkers.contains(where: { firstLine.contains($0) }) {
+            return text[firstLineRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return text
     }
 }
