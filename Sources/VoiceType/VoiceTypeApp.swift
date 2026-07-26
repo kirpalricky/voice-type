@@ -5,23 +5,29 @@ import OSLog
 @main
 struct VoiceTypeApp: App {
     @State private var appState = AppState()
-    @State private var audioRecorder: AudioRecorder?
-    @State private var transcriber: Transcriber?
-    @State private var glossaryStore: GlossaryStore?
+    @State private var audioRecorder = AudioRecorder()
+    @State private var transcriber = Transcriber()
+    @State private var glossaryStore = GlossaryStore()
+    @State private var historyStore = HistoryStore()
     @State private var resultPanelWindow: ResultPanelWindow?
     @State private var settingsWindow: NSWindow?
     @State private var recordingTimer: Timer?
+    @State private var processingTask: Task<Void, Never>?
 
     private let logger = OSLog(subsystem: "com.voicetype.app", category: "VoiceTypeApp")
 
     init() {
         setupHotkeys()
-        initializeServices()
     }
 
     var body: some Scene {
         MenuBarExtra("VoiceType", systemImage: menuBarIcon) {
-            VoiceTypeMenuView(appState: appState, onSettings: openSettings, onToggleRecording: toggleRecordingSync)
+            VoiceTypeMenuView(
+                appState: appState,
+                onSettings: { openSettings() },
+                onShowHistory: openHistory,
+                onToggleRecording: toggleRecordingSync
+            )
         }
         .menuBarExtraStyle(.window)
         .onChange(of: appState.isRecording) { _, newValue in
@@ -63,59 +69,40 @@ struct VoiceTypeApp: App {
         // Listen for push-to-talk key up
         KeyboardShortcuts.onKeyUp(for: .toggleRecording) { [self] in
             os_log("Hotkey released - stopping recording", log: self.logger, type: .info)
-            Task {
+            processingTask = Task {
                 await stopRecordingAndTranscribe()
             }
         }
     }
 
-    private func initializeServices() {
-        Task {
-            // Initialize audio recorder
-            self.audioRecorder = AudioRecorder()
-
-            // Initialize transcriber (will load models on first use)
-            self.transcriber = Transcriber()
-
-            // Initialize glossary store
-            self.glossaryStore = GlossaryStore()
-
-            os_log("Services initialized", log: self.logger, type: .info)
-        }
-    }
-
     private func startRecording() async {
-        guard let recorder = audioRecorder else {
-            os_log("Audio recorder not initialized", log: self.logger, type: .error)
-            return
-        }
-
         do {
             appState.isRecording = true
-            try await recorder.startRecording()
+            appState.processingError = nil
+            appState.levelHistory = Array(repeating: 0, count: appState.levelHistory.count)
+            try await audioRecorder.startRecording(onLevel: { [appState] level in
+                Task { @MainActor in
+                    appState.pushLevel(level)
+                }
+            })
         } catch {
             os_log("Failed to start recording: %@", log: self.logger, type: .error, error.localizedDescription)
             appState.isRecording = false
+            appState.processingError = "Couldn't start recording: \(error.localizedDescription)"
+            appState.showingResultPanel = true
         }
     }
 
     private func stopRecordingAndTranscribe() async {
-        guard let recorder = audioRecorder else {
-            os_log("Audio recorder not initialized", log: self.logger, type: .error)
-            appState.isRecording = false
-            return
-        }
-
-        defer {
-            appState.isRecording = false
-        }
-
         do {
             // Stop recording and get audio samples
-            let audioSamples = try await recorder.stopRecording()
+            let audioSamples = try await audioRecorder.stopRecording()
+            appState.isRecording = false
+            appState.audioLevel = 0
 
             guard !audioSamples.isEmpty else {
                 os_log("No audio samples captured", log: self.logger, type: .default)
+                appState.showingResultPanel = false
                 return
             }
 
@@ -123,28 +110,25 @@ struct VoiceTypeApp: App {
             appState.isProcessing = true
             defer {
                 appState.isProcessing = false
-            }
-
-            // Initialize transcriber if needed
-            if transcriber == nil {
-                self.transcriber = Transcriber()
-            }
-
-            guard let transcriber = transcriber else {
-                os_log("Transcriber not initialized", log: self.logger, type: .error)
-                return
+                appState.statusMessage = ""
             }
 
             // Initialize model on first use
-            try await transcriber.initialize()
+            appState.statusMessage = "Loading speech model…"
+            try await transcriber.initialize(onProgress: { [appState] status in
+                Task { @MainActor in
+                    appState.statusMessage = status
+                }
+            })
+            try Task.checkCancellation()
 
             // Transcribe audio
+            appState.statusMessage = "Transcribing…"
             let rawTranscript = try await transcriber.transcribe(audioSamples)
+            try Task.checkCancellation()
             appState.rawTranscript = rawTranscript
             print("RAW: \(rawTranscript)")
 
-            // Get glossary store (should be initialized by now)
-            let glossaryStore = self.glossaryStore ?? GlossaryStore()
             let glossaryEntries = glossaryStore.entries
 
             // Layer 1: Apply exact match (case-insensitive, phrase-aware)
@@ -163,7 +147,9 @@ struct VoiceTypeApp: App {
                     return "\(entry.canonical) (also heard as: \(entry.variants.joined(separator: ", ")))"
                 }
             }
+            appState.statusMessage = "Polishing transcript…"
             let polishedTranscript = try await Enhancer.polish(afterFuzzyMatch, glossary: glossaryStrings)
+            try Task.checkCancellation()
             appState.polishedTranscript = polishedTranscript
             print("POLISHED: \(polishedTranscript)")
 
@@ -172,13 +158,28 @@ struct VoiceTypeApp: App {
             os_log("After fuzzy match: %@", log: self.logger, type: .info, afterFuzzyMatch)
             os_log("Polished transcript: %@", log: self.logger, type: .info, polishedTranscript)
 
+            historyStore.addEntry(
+                rawTranscript: rawTranscript,
+                polishedTranscript: polishedTranscript,
+                audioSamples: audioSamples,
+                sampleRate: 16000
+            )
+
             // Show result panel when polished result is ready
             appState.showingResultPanel = true
             appState.elapsedRecordingSeconds = 0
 
+        } catch is CancellationError {
+            os_log("Processing cancelled by user", log: self.logger, type: .info)
+            appState.isRecording = false
+            appState.isProcessing = false
+            appState.showingResultPanel = false
         } catch {
             os_log("Transcription error: %@", log: self.logger, type: .error, error.localizedDescription)
+            appState.isRecording = false
             appState.isProcessing = false
+            appState.processingError = error.localizedDescription
+            appState.showingResultPanel = true
         }
     }
 
@@ -191,14 +192,36 @@ struct VoiceTypeApp: App {
     }
 
     private func toggleRecordingSync() {
-        Task {
+        processingTask = Task {
             await toggleRecording()
         }
     }
 
+    private func cancelProcessing() {
+        os_log("Cancel requested", log: self.logger, type: .info)
+        processingTask?.cancel()
+        processingTask = nil
+    }
+
+    private func stopRecordingSync() {
+        processingTask = Task {
+            await stopRecordingAndTranscribe()
+        }
+    }
+
+    private func dismissError() {
+        appState.processingError = nil
+        appState.showingResultPanel = false
+    }
+
     private func showResultPanel() {
         if resultPanelWindow == nil {
-            resultPanelWindow = ResultPanelWindow(appState: appState)
+            resultPanelWindow = ResultPanelWindow(
+                appState: appState,
+                onCancel: cancelProcessing,
+                onStopRecording: stopRecordingSync,
+                onDismissError: dismissError
+            )
         }
         resultPanelWindow?.show()
     }
@@ -219,9 +242,9 @@ struct VoiceTypeApp: App {
         recordingTimer = nil
     }
 
-    private func openSettings() {
+    private func openSettings(initialTab: Int = 0) {
         if settingsWindow == nil {
-            let settingsView = SettingsView(glossaryStore: glossaryStore ?? GlossaryStore())
+            let settingsView = SettingsView(glossaryStore: glossaryStore, historyStore: historyStore, initialTab: initialTab)
             let hostingController = NSHostingController(rootView: settingsView)
             let window = NSWindow(contentViewController: hostingController)
             window.title = "VoiceType Settings"
@@ -231,11 +254,16 @@ struct VoiceTypeApp: App {
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    private func openHistory() {
+        openSettings(initialTab: 2)
+    }
 }
 
 struct VoiceTypeMenuView: View {
     var appState: AppState
     var onSettings: () -> Void
+    var onShowHistory: () -> Void
     var onToggleRecording: () -> Void
 
     var body: some View {
@@ -254,6 +282,17 @@ struct VoiceTypeMenuView: View {
                     Text("⌘⇧D")
                         .font(.system(.caption, design: .monospaced))
                         .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+
+            Button(action: onShowHistory) {
+                HStack {
+                    Text("History…")
+                    Spacer()
                 }
                 .contentShape(Rectangle())
             }

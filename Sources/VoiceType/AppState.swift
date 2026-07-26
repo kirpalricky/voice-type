@@ -10,4 +10,14 @@ final class AppState {
     var showingResultPanel: Bool = false
     var showingRawInPanel: Bool = false
     var elapsedRecordingSeconds: Int = 0
+    var statusMessage: String = ""
+    var processingError: String?
+    var audioLevel: Float = 0
+    var levelHistory: [Float] = Array(repeating: 0, count: 32)
+
+    func pushLevel(_ level: Float) {
+        audioLevel = level
+        levelHistory.removeFirst()
+        levelHistory.append(level)
+    }
 }

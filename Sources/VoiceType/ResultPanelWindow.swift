@@ -4,18 +4,29 @@ import AppKit
 class ResultPanelWindow {
     private var panel: NSPanel?
     private let appState: AppState
+    private let onCancel: () -> Void
+    private let onStopRecording: () -> Void
+    private let onDismissError: () -> Void
     private var dismissalTimer: Timer?
     private var recordingTimer: Timer?
 
-    init(appState: AppState) {
+    init(
+        appState: AppState,
+        onCancel: @escaping () -> Void,
+        onStopRecording: @escaping () -> Void,
+        onDismissError: @escaping () -> Void
+    ) {
         self.appState = appState
+        self.onCancel = onCancel
+        self.onStopRecording = onStopRecording
+        self.onDismissError = onDismissError
     }
 
     func show() {
         // Create the panel if it doesn't exist
         if panel == nil {
             let panel = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
+                contentRect: NSRect(x: 0, y: 0, width: 400, height: 240),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -31,7 +42,10 @@ class ResultPanelWindow {
                 appState: appState,
                 onDismiss: { [weak self] in
                     self?.hide()
-                }
+                },
+                onCancel: onCancel,
+                onStopRecording: onStopRecording,
+                onDismissError: onDismissError
             )
 
             let hostingView = NSHostingView(rootView: resultView)
@@ -40,7 +54,7 @@ class ResultPanelWindow {
             // Center the panel on the main screen
             if let mainScreen = NSScreen.main {
                 let screenFrame = mainScreen.frame
-                let panelSize = CGSize(width: 400, height: 200)
+                let panelSize = CGSize(width: 400, height: 240)
                 let x = (screenFrame.width - panelSize.width) / 2
                 let y = screenFrame.height * 0.2 // Position at 20% from top
                 panel.setFrameTopLeftPoint(CGPoint(x: x, y: screenFrame.height - y))
@@ -80,7 +94,7 @@ class ResultPanelWindow {
         // Auto-dismiss after 15 seconds of showing the result (not recording)
         dismissalTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            if !self.appState.isRecording {
+            if !self.appState.isRecording && !self.appState.isProcessing {
                 self.hide()
             }
         }

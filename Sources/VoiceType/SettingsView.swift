@@ -1,13 +1,21 @@
+import AppKit
 import SwiftUI
 import KeyboardShortcuts
 
 struct SettingsView: View {
-    @State private var selectedTab = 0
+    @State private var selectedTab: Int
     var glossaryStore: GlossaryStore
+    var historyStore: HistoryStore
+
+    init(glossaryStore: GlossaryStore, historyStore: HistoryStore, initialTab: Int = 0) {
+        self.glossaryStore = glossaryStore
+        self.historyStore = historyStore
+        self._selectedTab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            GeneralSettingsTab()
+            GeneralSettingsTab(historyStore: historyStore)
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
@@ -18,12 +26,20 @@ struct SettingsView: View {
                     Label("Vocabulary", systemImage: "book")
                 }
                 .tag(1)
+
+            HistorySettingsTab(historyStore: historyStore)
+                .tabItem {
+                    Label("History", systemImage: "clock.arrow.circlepath")
+                }
+                .tag(2)
         }
         .frame(minWidth: 500, minHeight: 400)
     }
 }
 
 struct GeneralSettingsTab: View {
+    var historyStore: HistoryStore
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Form {
@@ -43,6 +59,21 @@ struct GeneralSettingsTab: View {
                         Spacer()
                     }
                     .padding(.vertical, 8)
+                }
+
+                Section(header: Text("Storage")) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Transcripts and recordings are saved to:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(historyStore.baseDir.path)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                        Button("Show in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([historyStore.baseDir])
+                        }
+                    }
+                    .padding(.vertical, 4)
                 }
             }
 
@@ -148,5 +179,108 @@ struct VocabularySettingsTab: View {
 
     private func deleteEntry(at index: Int) {
         try? glossaryStore.remove(at: index)
+    }
+}
+
+struct HistorySettingsTab: View {
+    var historyStore: HistoryStore
+
+    @State private var selectedEntryID: UUID?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Transcripts and recordings are saved to \(historyStore.baseDir.path)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer()
+
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([historyStore.baseDir])
+                }
+            }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor))
+
+            Divider()
+
+            if historyStore.entries.isEmpty {
+                Spacer()
+                Text("No recordings yet")
+                    .foregroundColor(.secondary)
+                Spacer()
+            } else {
+                List(selection: $selectedEntryID) {
+                    ForEach(historyStore.entries) { entry in
+                        HistoryRow(entry: entry, historyStore: historyStore)
+                            .tag(entry.id)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct HistoryRow: View {
+    let entry: HistoryEntry
+    var historyStore: HistoryStore
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(Self.dateFormatter.string(from: entry.timestamp))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                let text = entry.polishedTranscript.isEmpty ? entry.rawTranscript : entry.polishedTranscript
+                Text(text.isEmpty ? "(no speech detected)" : text)
+                    .font(.body)
+                    .lineLimit(3)
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button(action: copyToClipboard) {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.plain)
+                .help("Copy transcript")
+
+                if let audioURL = historyStore.audioURL(for: entry) {
+                    Button(action: {
+                        NSWorkspace.shared.activateFileViewerSelecting([audioURL])
+                    }) {
+                        Image(systemName: "waveform")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reveal audio in Finder")
+                }
+
+                Button(action: { historyStore.delete(entry) }) {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+                .help("Delete entry")
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func copyToClipboard() {
+        let text = entry.polishedTranscript.isEmpty ? entry.rawTranscript : entry.polishedTranscript
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }

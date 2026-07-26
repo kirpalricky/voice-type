@@ -8,17 +8,23 @@ actor AudioRecorder {
     private var audioEngine: AVAudioEngine?
     private var audioBuffer: [Float] = []
     private let targetSampleRate: Int = 16000
+    private var onLevel: (@Sendable (Float) -> Void)?
 
     /// Initialize the audio recorder
-    init() {
-        self.audioEngine = AVAudioEngine()
-    }
+    init() {}
 
     /// Start recording from the microphone
-    func startRecording() throws {
-        guard let engine = audioEngine else {
-            throw AudioRecorderError.engineNotInitialized
-        }
+    /// - Parameter onLevel: called with a normalized (0...1) RMS level for each captured buffer,
+    ///   on an unspecified queue — hop to the main actor before touching UI state.
+    ///
+    /// A fresh `AVAudioEngine` is created for every recording. Reusing one engine across
+    /// stop/start cycles intermittently throws an uncaught "format mismatch" exception from
+    /// `installTap` (the previously connected/reset node's cached format can go stale), which
+    /// crashes the whole app.
+    func startRecording(onLevel: (@Sendable (Float) -> Void)? = nil) throws {
+        let engine = AVAudioEngine()
+        self.audioEngine = engine
+        self.onLevel = onLevel
 
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
@@ -54,6 +60,8 @@ actor AudioRecorder {
 
         engine.stop()
         engine.reset()
+        onLevel = nil
+        audioEngine = nil
 
         os_log("Audio recording stopped, captured %d samples", log: self.logger, type: .info, self.audioBuffer.count)
 
@@ -71,6 +79,17 @@ actor AudioRecorder {
 
         // Convert to mono if needed (take first channel)
         let monoSamples = Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
+
+        if let onLevel {
+            var sumOfSquares: Float = 0
+            for sample in monoSamples {
+                sumOfSquares += sample * sample
+            }
+            let rms = frameLength > 0 ? sqrt(sumOfSquares / Float(frameLength)) : 0
+            // Scale so typical speech volume reads mid-meter; clamp to 0...1.
+            let normalized = min(rms * 6, 1.0)
+            onLevel(normalized)
+        }
 
         // Resample to 16kHz if needed
         if inputSampleRate == targetSampleRate {
