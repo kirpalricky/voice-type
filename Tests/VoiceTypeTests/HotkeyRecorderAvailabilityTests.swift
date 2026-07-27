@@ -45,15 +45,21 @@ struct HotkeyRecorderAvailabilityTests {
     }
 
     @Test
-    func isAvailable_ReturnsFalseWhenBundlePathIsEmpty() throws {
+    func isAvailable_ReturnsFalseWhenResourceBundlePathIsInvalid() throws {
+        // Verify that Bundle(path:) returns nil for non-existent paths (Foundation behavior)
+        let nonExistentPath = "/this/path/definitely/should/not/exist/\(UUID().uuidString)"
+        #expect(Bundle(path: nonExistentPath) == nil)
+
+        // Also test with a valid temp bundle directory but no resource subdirectory
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        // Create a fake bundle object pointing to a non-existent directory
-        let nonExistentPath = tempDir.appendingPathComponent("nonexistent", isDirectory: true).path
-        let bundle = Bundle(path: nonExistentPath)
+        guard let bundle = Bundle(path: tempDir.path) else {
+            Issue.record("Failed to create bundle from temp directory")
+            return
+        }
 
-        let result = HotkeyRecorderAvailability.isAvailable(bundle: bundle ?? .main)
+        let result = HotkeyRecorderAvailability.isAvailable(bundle: bundle)
         #expect(result == false)
     }
 }

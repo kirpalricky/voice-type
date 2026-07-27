@@ -26,16 +26,17 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ARCH_DIR/VoiceType" "$APP/Contents/MacOS/VoiceType"
 cp Sources/VoiceType/Resources/Info.plist "$APP/Contents/Info.plist"
 cp Sources/VoiceType/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cp -R "$ARCH_DIR/KeyboardShortcuts_KeyboardShortcuts.bundle" "$APP/Contents/Resources/KeyboardShortcuts_KeyboardShortcuts.bundle"
+cp -R "$ARCH_DIR/KeyboardShortcuts_KeyboardShortcuts.bundle" "$APP/KeyboardShortcuts_KeyboardShortcuts.bundle"
 
 # Verify the KeyboardShortcuts bundle was copied successfully and is non-empty
-if ! [ -d "$APP/Contents/Resources/KeyboardShortcuts_KeyboardShortcuts.bundle" ]; then
-    echo "ERROR: KeyboardShortcuts bundle directory not found at $APP/Contents/Resources/KeyboardShortcuts_KeyboardShortcuts.bundle" >&2
+BUNDLE_PATH="$APP/KeyboardShortcuts_KeyboardShortcuts.bundle"
+if ! [ -d "$BUNDLE_PATH" ]; then
+    echo "ERROR: KeyboardShortcuts bundle directory not found at $BUNDLE_PATH" >&2
     exit 1
 fi
 
-if ! find "$APP/Contents/Resources/KeyboardShortcuts_KeyboardShortcuts.bundle" -type f | grep -q .; then
-    echo "ERROR: KeyboardShortcuts bundle is empty at $APP/Contents/Resources/KeyboardShortcuts_KeyboardShortcuts.bundle" >&2
+if ! [ -n "$(find "$BUNDLE_PATH" -type f -print -quit)" ]; then
+    echo "ERROR: KeyboardShortcuts bundle is empty at $BUNDLE_PATH" >&2
     exit 1
 fi
 
