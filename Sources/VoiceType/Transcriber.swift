@@ -112,7 +112,7 @@ actor Transcriber {
 
         do {
             let transcript = try await manager.transcribe(samples)
-            os_log("Transcription complete: %@", log: self.logger, type: .info, transcript)
+            os_log("Transcription complete: %d chars", log: self.logger, type: .info, transcript.count)
             return transcript
         } catch {
             os_log("Transcription failed: %@", log: self.logger, type: .error, error.localizedDescription)

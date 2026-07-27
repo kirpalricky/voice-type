@@ -160,17 +160,14 @@ struct VoiceTypeApp: App {
             }
             try Task.checkCancellation()
             appState.rawTranscript = rawTranscript
-            print("RAW: \(rawTranscript)")
 
             let glossaryEntries = glossaryStore.entries
 
             // Layer 1: Apply exact match (case-insensitive, phrase-aware)
             let afterExactMatch = VocabularyMatcher.applyExactMatch(rawTranscript, glossary: glossaryEntries)
-            print("AFTER-EXACT: \(afterExactMatch)")
 
             // Layer 2: Apply fuzzy match (with dictionary gate and length-aware threshold)
             let afterFuzzyMatch = VocabularyMatcher.applyFuzzyMatch(afterExactMatch, glossary: glossaryEntries)
-            print("AFTER-FUZZY: \(afterFuzzyMatch)")
 
             // Layer 3: Polish transcript using on-device Foundation Models with glossary hints
             let glossaryStrings = glossaryEntries.map { entry in
@@ -186,12 +183,8 @@ struct VoiceTypeApp: App {
             }
             try Task.checkCancellation()
             appState.polishedTranscript = polishedTranscript
-            print("POLISHED: \(polishedTranscript)")
 
-            os_log("Raw transcript: %@", log: self.logger, type: .info, rawTranscript)
-            os_log("After exact match: %@", log: self.logger, type: .info, afterExactMatch)
-            os_log("After fuzzy match: %@", log: self.logger, type: .info, afterFuzzyMatch)
-            os_log("Polished transcript: %@", log: self.logger, type: .info, polishedTranscript)
+            os_log("Transcription pipeline complete: %d chars raw, %d chars after exact, %d chars after fuzzy, %d chars polished", log: self.logger, type: .info, rawTranscript.count, afterExactMatch.count, afterFuzzyMatch.count, polishedTranscript.count)
 
             historyStore.addEntry(
                 rawTranscript: rawTranscript,
