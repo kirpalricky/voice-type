@@ -4,6 +4,28 @@ import OSLog
 
 /// Provides vocabulary matching capabilities with multiple layers of correction
 struct VocabularyMatcher {
+    // MARK: - Static Cache for Compiled Regexes
+    /// Cache of compiled NSRegularExpression objects keyed by escaped pattern
+    /// This prevents recompilation of the same regex patterns on every call
+    private static var regexCache: [String: NSRegularExpression] = [:]
+    private static let regexCacheLock = NSLock()
+
+    /// Get or create a cached regex for the given pattern
+    private static func cachedRegex(for pattern: String) -> NSRegularExpression? {
+        regexCacheLock.lock()
+        defer { regexCacheLock.unlock() }
+
+        if let cached = regexCache[pattern] {
+            return cached
+        }
+
+        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+            regexCache[pattern] = regex
+            return regex
+        }
+        return nil
+    }
+
     /// Layer 1: Exact/casing match - case-insensitive, phrase-aware find-and-replace
     /// - Parameters:
     ///   - text: The input text to correct
@@ -59,7 +81,7 @@ struct VocabularyMatcher {
 
         // Pattern: word boundary + canonical form (lowercased) + word boundary
         let pattern = "(?i)\\b\(NSRegularExpression.escapedPattern(for: canonicalLower))\\b"
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+        if let regex = cachedRegex(for: pattern) {
             let range = NSRange(result.startIndex..<result.endIndex, in: result)
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: canonicalForm)
         }
@@ -74,7 +96,7 @@ struct VocabularyMatcher {
 
         // Pattern: word boundary + variant (lowercased) + word boundary
         let pattern = "(?i)\\b\(NSRegularExpression.escapedPattern(for: variantLower))\\b"
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+        if let regex = cachedRegex(for: pattern) {
             let range = NSRange(result.startIndex..<result.endIndex, in: result)
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: canonical)
         }
@@ -86,7 +108,7 @@ struct VocabularyMatcher {
     private static func replaceCaseInsensitive(_ text: String, target: String, replacement: String) -> String {
         var result = text
         let pattern = "(?i)\\b\(NSRegularExpression.escapedPattern(for: target))\\b"
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+        if let regex = cachedRegex(for: pattern) {
             let range = NSRange(result.startIndex..<result.endIndex, in: result)
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: replacement)
         }
@@ -121,18 +143,21 @@ struct VocabularyMatcher {
 
     /// Guard 2 + Fuzzy matching logic: Find a fuzzy match using Levenshtein distance
     /// Implements length-aware threshold to prevent false positives on short terms
+    /// When multiple candidates tie on distance, prefers the one that appears first in the glossary (deterministic)
     private static func findFuzzyMatch(_ word: String, in glossary: [GlossaryEntry]) -> GlossaryEntry? {
         let wordLower = word.lowercased()
-        var bestMatch: (entry: GlossaryEntry, distance: Int)?
+        var bestMatch: (entry: GlossaryEntry, distance: Int, glossaryIndex: Int)?
         var bestDistance = Int.max
 
-        for entry in glossary {
+        for (glossaryIndex, entry) in glossary.enumerated() {
             // Check canonical form
             let canonicalDistance = levenshteinDistance(wordLower, entry.canonical.lowercased())
             if shouldAcceptMatch(canonicalDistance, termLength: entry.canonical.count) {
-                if canonicalDistance < bestDistance {
+                // Update if better distance, OR same distance but earlier in glossary
+                if canonicalDistance < bestDistance ||
+                   (canonicalDistance == bestDistance && (bestMatch == nil || glossaryIndex < bestMatch!.glossaryIndex)) {
                     bestDistance = canonicalDistance
-                    bestMatch = (entry, canonicalDistance)
+                    bestMatch = (entry, canonicalDistance, glossaryIndex)
                 }
             }
 
@@ -140,9 +165,11 @@ struct VocabularyMatcher {
             for variant in entry.variants {
                 let variantDistance = levenshteinDistance(wordLower, variant.lowercased())
                 if shouldAcceptMatch(variantDistance, termLength: variant.count) {
-                    if variantDistance < bestDistance {
+                    // Update if better distance, OR same distance but earlier in glossary
+                    if variantDistance < bestDistance ||
+                       (variantDistance == bestDistance && (bestMatch == nil || glossaryIndex < bestMatch!.glossaryIndex)) {
                         bestDistance = variantDistance
-                        bestMatch = (entry, variantDistance)
+                        bestMatch = (entry, variantDistance, glossaryIndex)
                     }
                 }
             }
@@ -166,6 +193,7 @@ struct VocabularyMatcher {
     }
 
     /// Calculate Levenshtein distance (edit distance) between two strings
+    /// Uses O(min(m,n)) space via rolling-row optimization instead of O(m*n) full matrix
     /// This measures the minimum number of single-character edits needed to transform one string to another
     private static func levenshteinDistance(_ s1: String, _ s2: String) -> Int {
         let s1Array = Array(s1)
@@ -176,32 +204,36 @@ struct VocabularyMatcher {
         if m == 0 { return n }
         if n == 0 { return m }
 
-        // Create DP table
-        var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
-
-        // Initialize base cases
-        for i in 0...m {
-            dp[i][0] = i
-        }
-        for j in 0...n {
-            dp[0][j] = j
+        // Early exit: if length difference exceeds typical threshold (2), skip expensive computation
+        // This is a heuristic for the glossary use-case where we only accept distance <= 2 for longer terms
+        if abs(m - n) > 2 {
+            return abs(m - n)
         }
 
-        // Fill DP table
+        // Use rolling two-row optimization: only keep current and previous row
+        // Swap between them to avoid allocating a full (m+1) x (n+1) matrix
+        var previousRow = Array(0...n)
+        var currentRow = Array(repeating: 0, count: n + 1)
+
         for i in 1...m {
+            currentRow[0] = i
+
             for j in 1...n {
                 if s1Array[i - 1] == s2Array[j - 1] {
-                    dp[i][j] = dp[i - 1][j - 1]
+                    currentRow[j] = previousRow[j - 1]
                 } else {
-                    dp[i][j] = 1 + min(
-                        dp[i - 1][j],    // deletion
-                        dp[i][j - 1],    // insertion
-                        dp[i - 1][j - 1] // substitution
+                    currentRow[j] = 1 + min(
+                        previousRow[j],      // deletion
+                        currentRow[j - 1],   // insertion
+                        previousRow[j - 1]   // substitution
                     )
                 }
             }
+
+            // Swap rows for next iteration
+            swap(&previousRow, &currentRow)
         }
 
-        return dp[m][n]
+        return previousRow[n]
     }
 }
