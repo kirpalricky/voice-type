@@ -53,6 +53,14 @@ actor AudioRecorder {
     /// into a subsequent (unrelated) recording attempt's audio buffer.
     private var recordingGeneration = 0
 
+    /// Accumulates raw samples across tap callbacks for the meter's FFT, independent of any
+    /// single callback's own chunk size. Needed because some input devices (e.g. Bluetooth
+    /// headset mics running narrowband HFP at 8kHz) deliver ~100ms buffers smaller than
+    /// `fftSize` (1024 samples) — a single callback's raw samples alone are never enough for
+    /// a full FFT window on those devices, which silently killed the meter (the guard in
+    /// `computeBands` never passed) while leaving actual transcription capture unaffected.
+    private var meterScratch: [Float] = []
+
     /// Initialize the audio recorder
     init() {}
 
@@ -101,11 +109,13 @@ actor AudioRecorder {
         self.dcPrevIn = 0
         self.dcPrevOut = 0
         self.buffersSinceStart = 0
+        self.meterScratch = []
         recordingGeneration += 1
         let myGeneration = recordingGeneration
 
         let inputNode = engine.inputNode
         let format = inputNode.inputFormat(forBus: 0)
+        DiagnosticLogger.shared.log("AudioRecorder.attemptStartRecording() input format: \(format.sampleRate)Hz, \(format.channelCount)ch")
         setUpSpectrumAnalysis(sampleRate: format.sampleRate)
 
         // Clear previous audio and pre-allocate for expected max duration (2 min @ 16kHz ~1.9M samples)
@@ -232,7 +242,12 @@ actor AudioRecorder {
         // after DC-blocking; drop the first few from the meter entirely rather than let that
         // transient show up as a spike right as recording begins. Audio used for
         // transcription below is unaffected.
-        if buffersSinceStart > 3, let onBands, let bands = computeBands(from: monoSamples) {
+        meterScratch.append(contentsOf: monoSamples)
+        // Bound memory: keep roughly two FFT windows of history, no more.
+        if meterScratch.count > fftSize * 4 {
+            meterScratch.removeFirst(meterScratch.count - fftSize * 2)
+        }
+        if buffersSinceStart > 3, let onBands, meterScratch.count >= fftSize, let bands = computeBands(from: meterScratch) {
             onBands(bands)
         }
 
