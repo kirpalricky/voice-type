@@ -13,24 +13,40 @@ struct VoiceTypeApp: App {
     @State private var resultPanelWindow: ResultPanelWindow?
     @State private var settingsWindow: NSWindow?
     @State private var recordingTimer: Timer?
-    @State private var processingTask: Task<Void, Never>?
+    @State private var transcriptionCoordinator: TranscriptionCoordinator?
     @State private var hotkeyManager: HotkeyManager?
 
     private let logger = OSLog(subsystem: "com.voicetype.app", category: "VoiceTypeApp")
 
     init() {
-        hotkeyManager = HotkeyManager(
+        // Assigning through the property name (`self.foo = ...`) inside init() does not
+        // reliably install the value into @State's real backing storage — reads of the same
+        // property later in this same init(), or from closures capturing self here, can see
+        // the pre-assignment (nil) value. Assigning through the underscore-prefixed backing
+        // storage (`_foo = State(initialValue:)`) is the correct way to give a @State property
+        // a value computed from other properties inside init().
+        let coordinator = TranscriptionCoordinator(
+            appState: appState,
+            audioRecorder: audioRecorder,
+            transcriber: transcriber,
+            polisher: FoundationModelsPolisher(),
+            glossaryStore: glossaryStore,
+            historyStore: historyStore,
+            logger: OSLog(subsystem: "com.voicetype.app", category: "TranscriptionCoordinator"),
+            onHideResultPanel: { [self] in resultPanelWindow?.hide() }
+        )
+        _transcriptionCoordinator = State(initialValue: coordinator)
+
+        _hotkeyManager = State(initialValue: HotkeyManager(
             onKeyDown: { [self] in
                 Task {
-                    await self.startRecording()
+                    await self.transcriptionCoordinator?.startRecording()
                 }
             },
             onKeyUp: { [self] in
-                self.processingTask = Task {
-                    await self.stopRecordingAndTranscribe()
-                }
+                self.transcriptionCoordinator?.stopRecordingSync()
             }
-        )
+        ))
     }
 
     var body: some Scene {
@@ -39,7 +55,10 @@ struct VoiceTypeApp: App {
                 appState: appState,
                 onSettings: { openSettings() },
                 onShowHistory: openHistory,
-                onToggleRecording: toggleRecordingSync
+                onToggleRecording: {
+                    DiagnosticLogger.shared.log("Menu 'Start/Stop Recording' clicked, transcriptionCoordinator is nil: \(transcriptionCoordinator == nil)")
+                    transcriptionCoordinator?.toggleRecordingSync()
+                }
             )
         }
         .menuBarExtraStyle(.window)
@@ -70,178 +89,6 @@ struct VoiceTypeApp: App {
         }
     }
 
-    private func startRecording() async {
-        guard await hasMicrophoneAccess() else {
-            os_log("Microphone access not granted", log: self.logger, type: .error)
-            appState.processingError = "Microphone access is required. Enable it in System Settings > Privacy & Security > Microphone."
-            appState.showingResultPanel = true
-            return
-        }
-
-        do {
-            appState.isRecording = true
-            appState.processingError = nil
-            appState.resetLevels()
-            try await audioRecorder.startRecording(onBands: { [appState] bands in
-                Task { @MainActor in
-                    appState.latestBands = bands
-                }
-            })
-        } catch {
-            os_log("Failed to start recording: %@", log: self.logger, type: .error, error.localizedDescription)
-            appState.isRecording = false
-            appState.processingError = "Couldn't start recording: \(error.localizedDescription)"
-            appState.showingResultPanel = true
-        }
-    }
-
-    /// Ensures the microphone TCC prompt (if any) is fully resolved before the audio engine
-    /// starts. Starting the engine while a permission dialog is still pending races the OS
-    /// grant and silently captures nothing for the whole recording.
-    private func hasMicrophoneAccess() async -> Bool {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            return true
-        case .notDetermined:
-            let granted = await withCheckedContinuation { continuation in
-                AVCaptureDevice.requestAccess(for: .audio) { granted in
-                    continuation.resume(returning: granted)
-                }
-            }
-            if granted {
-                // The HAL input route isn't always live the instant the TCC prompt resolves;
-                // give it a moment before the caller starts the engine.
-                try? await Task.sleep(nanoseconds: 300_000_000)
-            }
-            return granted
-        case .denied, .restricted:
-            return false
-        @unknown default:
-            return false
-        }
-    }
-
-
-    private func stopRecordingAndTranscribe() async {
-        do {
-            // Stop recording and get audio samples
-            let audioSamples = try await audioRecorder.stopRecording()
-            appState.isRecording = false
-
-            guard !audioSamples.isEmpty else {
-                os_log("No audio samples captured", log: self.logger, type: .error)
-                appState.processingError = "No audio was captured. Check your microphone and try again."
-                appState.showingResultPanel = true
-                return
-            }
-
-            // Set processing state
-            appState.isProcessing = true
-            defer {
-                appState.isProcessing = false
-                appState.statusMessage = ""
-            }
-
-            // Initialize model on first use
-            appState.statusMessage = "Loading speech model…"
-            try await cancellable { [transcriber, appState] in
-                try await transcriber.initialize(onProgress: { status in
-                    Task { @MainActor in
-                        appState.statusMessage = status
-                    }
-                })
-            }
-            try Task.checkCancellation()
-
-            // Transcribe audio
-            appState.statusMessage = "Transcribing…"
-            let rawTranscript = try await cancellable { [transcriber] in
-                try await transcriber.transcribe(audioSamples)
-            }
-            try Task.checkCancellation()
-            appState.rawTranscript = rawTranscript
-
-            let glossaryEntries = glossaryStore.entries
-
-            // Layer 1: Apply exact match (case-insensitive, phrase-aware)
-            let afterExactMatch = VocabularyMatcher.applyExactMatch(rawTranscript, glossary: glossaryEntries)
-
-            // Layer 2: Apply fuzzy match (with dictionary gate and length-aware threshold)
-            let afterFuzzyMatch = VocabularyMatcher.applyFuzzyMatch(afterExactMatch, glossary: glossaryEntries)
-
-            // Layer 3: Polish transcript using on-device Foundation Models with glossary hints
-            let glossaryStrings = glossaryEntries.map { entry in
-                if entry.variants.isEmpty {
-                    return entry.canonical
-                } else {
-                    return "\(entry.canonical) (also heard as: \(entry.variants.joined(separator: ", ")))"
-                }
-            }
-            appState.statusMessage = "Polishing transcript…"
-            let polishedTranscript = try await cancellable {
-                try await Enhancer.polish(afterFuzzyMatch, glossary: glossaryStrings)
-            }
-            try Task.checkCancellation()
-            appState.polishedTranscript = polishedTranscript
-
-            os_log("Transcription pipeline complete: %d chars raw, %d chars after exact, %d chars after fuzzy, %d chars polished", log: self.logger, type: .info, rawTranscript.count, afterExactMatch.count, afterFuzzyMatch.count, polishedTranscript.count)
-
-            historyStore.addEntry(
-                rawTranscript: rawTranscript,
-                polishedTranscript: polishedTranscript,
-                audioSamples: audioSamples,
-                sampleRate: 16000
-            )
-
-            // Show result panel when polished result is ready
-            appState.showingResultPanel = true
-            appState.elapsedRecordingSeconds = 0
-
-        } catch is CancellationError {
-            os_log("Processing cancelled by user", log: self.logger, type: .info)
-            appState.isRecording = false
-            appState.isProcessing = false
-            appState.showingResultPanel = false
-            // `showingResultPanel` may already be false here (the panel was opened via the
-            // isRecording->showResultPanel path, not this flag), so the onChange that would
-            // normally hide the window never fires. Hide it directly so cancelling doesn't
-            // leave a blank panel on screen.
-            resultPanelWindow?.hide()
-        } catch {
-            os_log("Transcription error: %@", log: self.logger, type: .error, error.localizedDescription)
-            appState.isRecording = false
-            appState.isProcessing = false
-            appState.processingError = error.localizedDescription
-            appState.showingResultPanel = true
-        }
-    }
-
-    private func toggleRecording() async {
-        if appState.isRecording {
-            await stopRecordingAndTranscribe()
-        } else {
-            await startRecording()
-        }
-    }
-
-    private func toggleRecordingSync() {
-        processingTask = Task {
-            await toggleRecording()
-        }
-    }
-
-    private func cancelProcessing() {
-        os_log("Cancel requested", log: self.logger, type: .info)
-        processingTask?.cancel()
-        processingTask = nil
-    }
-
-    private func stopRecordingSync() {
-        processingTask = Task {
-            await stopRecordingAndTranscribe()
-        }
-    }
-
     private func dismissError() {
         appState.processingError = nil
         appState.showingResultPanel = false
@@ -251,8 +98,8 @@ struct VoiceTypeApp: App {
         if resultPanelWindow == nil {
             resultPanelWindow = ResultPanelWindow(
                 appState: appState,
-                onCancel: cancelProcessing,
-                onStopRecording: stopRecordingSync,
+                onCancel: { self.transcriptionCoordinator?.cancelProcessing() },
+                onStopRecording: { self.transcriptionCoordinator?.stopRecordingSync() },
                 onDismissError: dismissError
             )
         }

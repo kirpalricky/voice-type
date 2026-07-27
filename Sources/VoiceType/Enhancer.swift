@@ -83,3 +83,10 @@ struct Enhancer {
         return text
     }
 }
+
+/// Wrapper conforming to the Polishing protocol for Enhancer's static polish function
+struct FoundationModelsPolisher: Polishing {
+    func polish(_ text: String, glossary: [String]) async throws -> String {
+        try await Enhancer.polish(text, glossary: glossary)
+    }
+}
