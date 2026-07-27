@@ -9,6 +9,7 @@ class ResultPanelWindow {
     private let onDismissError: () -> Void
     private var dismissalTimer: Timer?
     private var recordingTimer: Timer?
+    private var positionObserver: NSObjectProtocol?
 
     init(
         appState: AppState,
@@ -37,6 +38,10 @@ class ResultPanelWindow {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.backgroundColor = .clear
 
+            // Enable dragging by clicking on background areas
+            panel.isMovable = true
+            panel.isMovableByWindowBackground = true
+
             // Create the SwiftUI view
             let resultView = ResultPanelView(
                 appState: appState,
@@ -51,16 +56,23 @@ class ResultPanelWindow {
             let hostingView = NSHostingView(rootView: resultView)
             panel.contentView = hostingView
 
-            // Center the panel on the main screen
-            if let mainScreen = NSScreen.main {
-                let screenFrame = mainScreen.frame
-                let panelSize = CGSize(width: 400, height: 240)
-                let x = (screenFrame.width - panelSize.width) / 2
-                let y = screenFrame.height * 0.2 // Position at 20% from top
-                panel.setFrameTopLeftPoint(CGPoint(x: x, y: screenFrame.height - y))
+            // Restore saved position or use default positioning
+            let positionRestored = restoreSavedPosition(for: panel)
+            if !positionRestored {
+                // Center the panel on the main screen as fallback
+                if let mainScreen = NSScreen.main {
+                    let screenFrame = mainScreen.frame
+                    let panelSize = CGSize(width: 400, height: 240)
+                    let x = (screenFrame.width - panelSize.width) / 2
+                    let y = screenFrame.height * 0.2 // Position at 20% from top
+                    panel.setFrameTopLeftPoint(CGPoint(x: x, y: screenFrame.height - y))
+                }
             }
 
             self.panel = panel
+
+            // Register notification observer to save position when panel moves
+            registerPositionObserver(for: panel)
         }
 
         panel?.orderFront(nil)
@@ -105,8 +117,68 @@ class ResultPanelWindow {
         dismissalTimer = nil
     }
 
+    // MARK: - Position Persistence
+
+    private func registerPositionObserver(for panel: NSPanel) {
+        unregisterPositionObserver()
+        positionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            self?.savePanelPosition(panel)
+        }
+    }
+
+    private func unregisterPositionObserver() {
+        if let observer = positionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            positionObserver = nil
+        }
+    }
+
+    private func savePanelPosition(_ panel: NSPanel) {
+        let origin = panel.frame.origin
+        UserDefaults.standard.set(
+            ["x": origin.x, "y": origin.y],
+            forKey: "ResultPanelOrigin"
+        )
+    }
+
+    private func restoreSavedPosition(for panel: NSPanel) -> Bool {
+        guard let saved = UserDefaults.standard.dictionary(forKey: "ResultPanelOrigin"),
+              let x = saved["x"] as? CGFloat,
+              let y = saved["y"] as? CGFloat else {
+            return false
+        }
+
+        let savedOrigin = CGPoint(x: x, y: y)
+
+        // Validate the saved position is still on a visible screen
+        if isPositionOnScreen(savedOrigin) {
+            panel.setFrameOrigin(savedOrigin)
+            return true
+        }
+
+        return false
+    }
+
+    private func isPositionOnScreen(_ origin: CGPoint) -> Bool {
+        // Check if a point roughly 20pt inset from the origin is contained within any screen's frame
+        let testPoint = CGPoint(x: origin.x + 20, y: origin.y + 20)
+
+        for screen in NSScreen.screens {
+            if screen.frame.contains(testPoint) {
+                return true
+            }
+        }
+
+        return false
+    }
+
     deinit {
         stopRecordingTimer()
         stopDismissalTimer()
+        unregisterPositionObserver()
     }
 }
