@@ -1,10 +1,10 @@
 import Foundation
 
 enum HotkeyRecorderAvailability {
-    static let resourceBundleName = "KeyboardShortcuts_KeyboardShortcuts.bundle"
+    static let resourceBundleName = "KeyboardShortcuts_KeyboardShortcuts"
+    static let resourceBundleExtension = "bundle"
 
     static func isAvailable(bundle: Bundle = .main) -> Bool {
-        let path = bundle.bundleURL.appendingPathComponent(resourceBundleName).path
-        return FileManager.default.fileExists(atPath: path)
+        bundle.url(forResource: resourceBundleName, withExtension: resourceBundleExtension) != nil
     }
 }

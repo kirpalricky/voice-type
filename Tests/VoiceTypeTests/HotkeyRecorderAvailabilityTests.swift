@@ -16,7 +16,8 @@ struct HotkeyRecorderAvailabilityTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         // Create a fake bundle directory with the expected name
-        let bundlePath = tempDir.appendingPathComponent(HotkeyRecorderAvailability.resourceBundleName, isDirectory: true)
+        let bundleName = "\(HotkeyRecorderAvailability.resourceBundleName).\(HotkeyRecorderAvailability.resourceBundleExtension)"
+        let bundlePath = tempDir.appendingPathComponent(bundleName, isDirectory: true)
         try FileManager.default.createDirectory(at: bundlePath, withIntermediateDirectories: true)
 
         // Create a fake bundle object pointing to tempDir
