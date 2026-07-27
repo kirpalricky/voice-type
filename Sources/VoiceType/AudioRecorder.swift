@@ -27,6 +27,14 @@ actor AudioRecorder {
     private var bandTiltDb: [Float] = []
     private var sampleRateForBands: Double = 0
 
+    // Pre-allocated scratch buffers for computeBands to avoid allocation churn on the audio callback path.
+    // Reused across every computeBands call; re-sized if setUpSpectrumAnalysis is called again.
+    private var fftWindowed: [Float] = []
+    private var fftRealp: [Float] = []
+    private var fftImagp: [Float] = []
+    private var fftMagnitudes: [Float] = []
+    private var bandsMagnitudes: [Float] = []
+
     /// Persistent one-pole DC-blocking filter state, carried across buffer callbacks (not
     /// reset per-buffer) so the filter stays continuous. Removes mic DC bias and low-frequency
     /// thump — including the cold-start pop AVAudioEngine's tap can produce in its first
@@ -88,8 +96,10 @@ actor AudioRecorder {
         let format = inputNode.inputFormat(forBus: 0)
         setUpSpectrumAnalysis(sampleRate: format.sampleRate)
 
-        // Clear previous audio
+        // Clear previous audio and pre-allocate for expected max duration (2 min @ 16kHz ~1.9M samples)
+        // to avoid repeated reallocation during recording
         audioBuffer.removeAll()
+        audioBuffer.reserveCapacity(1_920_000)
 
         // Attach audio tap to input node to capture audio
         inputNode.installTap(
@@ -188,6 +198,13 @@ actor AudioRecorder {
         hannWindow = [Float](repeating: 0, count: fftSize)
         vDSP_hann_window(&hannWindow, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
 
+        // Pre-allocate scratch buffers for computeBands to avoid allocation churn on every audio callback.
+        fftWindowed = [Float](repeating: 0, count: fftSize)
+        fftRealp = [Float](repeating: 0, count: fftSize / 2)
+        fftImagp = [Float](repeating: 0, count: fftSize / 2)
+        fftMagnitudes = [Float](repeating: 0, count: fftSize / 2)
+        bandsMagnitudes = [Float](repeating: 0, count: numBands)
+
         sampleRateForBands = sampleRate
 
         let fMin = 80.0
@@ -235,17 +252,21 @@ actor AudioRecorder {
 
         let filtered = dcBlock(samples)
         let tail = Array(filtered.suffix(fftSize))
-        var windowed = [Float](repeating: 0, count: fftSize)
-        vDSP_vmul(tail, 1, hannWindow, 1, &windowed, 1, vDSP_Length(fftSize))
 
-        var realp = [Float](repeating: 0, count: fftSize / 2)
-        var imagp = [Float](repeating: 0, count: fftSize / 2)
-        var magnitudes = [Float](repeating: 0, count: fftSize / 2)
+        // Reuse pre-allocated buffers instead of allocating fresh ones on every callback.
+        // Zero them out to prepare for reuse.
+        vDSP_vclr(&fftWindowed, 1, vDSP_Length(fftSize))
+        vDSP_vclr(&fftRealp, 1, vDSP_Length(fftSize / 2))
+        vDSP_vclr(&fftImagp, 1, vDSP_Length(fftSize / 2))
+        vDSP_vclr(&fftMagnitudes, 1, vDSP_Length(fftSize / 2))
 
-        windowed.withUnsafeMutableBufferPointer { windowedPtr in
-            windowedPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
-                realp.withUnsafeMutableBufferPointer { realPtr in
-                    imagp.withUnsafeMutableBufferPointer { imagPtr in
+        vDSP_vmul(tail, 1, hannWindow, 1, &fftWindowed, 1, vDSP_Length(fftSize))
+
+        fftWindowed.withUnsafeMutableBufferPointer { windowedPtr in
+            guard let baseAddress = windowedPtr.baseAddress else { return }
+            baseAddress.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
+                fftRealp.withUnsafeMutableBufferPointer { realPtr in
+                    fftImagp.withUnsafeMutableBufferPointer { imagPtr in
                         var split = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
                         vDSP_ctoz(complexPtr, 2, &split, 1, vDSP_Length(fftSize / 2))
                         vDSP_fft_zrip(fftSetup, &split, 1, vDSP_Length(log2(Double(fftSize))), FFTDirection(FFT_FORWARD))
@@ -253,7 +274,7 @@ actor AudioRecorder {
                         // zero them so they don't leak into the first band as bogus energy.
                         split.realp[0] = 0
                         split.imagp[0] = 0
-                        vDSP_zvmags(&split, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
+                        vDSP_zvmags(&split, 1, &fftMagnitudes, 1, vDSP_Length(fftSize / 2))
                     }
                 }
             }
@@ -267,20 +288,22 @@ actor AudioRecorder {
         let fftPowerScale = Float(fftSize / 2) * Float(fftSize / 2)
         let minDb: Float = -50
 
-        var bands = [Float](repeating: 0, count: numBands)
+        // Zero out the bands buffer for reuse
+        vDSP_vclr(&bandsMagnitudes, 1, vDSP_Length(numBands))
+
         for band in 0..<numBands {
             let lo = bandLowBin[band]
             let hi = max(bandHighBin[band], lo + 1)
             var peak: Float = 0
-            for bin in lo..<min(hi, magnitudes.count) {
-                peak = max(peak, magnitudes[bin])
+            for bin in lo..<min(hi, fftMagnitudes.count) {
+                peak = max(peak, fftMagnitudes[bin])
             }
             let normalizedPeak = peak / fftPowerScale
             let db = (normalizedPeak > 0 ? 10 * log10(normalizedPeak) : minDb) + bandTiltDb[band]
-            bands[band] = max(0, min((db - minDb) / -minDb, 1.0))
+            bandsMagnitudes[band] = max(0, min((db - minDb) / -minDb, 1.0))
         }
 
-        return bands
+        return bandsMagnitudes
     }
 
     /// One-pole DC-blocking high-pass filter (`y[n] = x[n] - x[n-1] + 0.995*y[n-1]`), applied
