@@ -14,11 +14,23 @@ struct VoiceTypeApp: App {
     @State private var settingsWindow: NSWindow?
     @State private var recordingTimer: Timer?
     @State private var processingTask: Task<Void, Never>?
+    @State private var hotkeyManager: HotkeyManager?
 
     private let logger = OSLog(subsystem: "com.voicetype.app", category: "VoiceTypeApp")
 
     init() {
-        setupHotkeys()
+        hotkeyManager = HotkeyManager(
+            onKeyDown: { [self] in
+                Task {
+                    await self.startRecording()
+                }
+            },
+            onKeyUp: { [self] in
+                self.processingTask = Task {
+                    await self.stopRecordingAndTranscribe()
+                }
+            }
+        )
     }
 
     var body: some Scene {
@@ -55,24 +67,6 @@ struct VoiceTypeApp: App {
             return "arrow.triangle.2.circlepath"
         } else {
             return "waveform"
-        }
-    }
-
-    private func setupHotkeys() {
-        // Listen for push-to-talk key down
-        KeyboardShortcuts.onKeyDown(for: .toggleRecording) { [self] in
-            os_log("Hotkey pressed - starting recording", log: self.logger, type: .info)
-            Task {
-                await startRecording()
-            }
-        }
-
-        // Listen for push-to-talk key up
-        KeyboardShortcuts.onKeyUp(for: .toggleRecording) { [self] in
-            os_log("Hotkey released - stopping recording", log: self.logger, type: .info)
-            processingTask = Task {
-                await stopRecordingAndTranscribe()
-            }
         }
     }
 
