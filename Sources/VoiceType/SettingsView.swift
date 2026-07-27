@@ -130,6 +130,9 @@ struct AboutSettingsTab: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
 
+    @State private var diagnosticLoggingEnabled = DiagnosticLogger.shared.isEnabled
+    @State private var showingClearLogConfirmation = false
+
     var body: some View {
         Form {
             Section {
@@ -141,6 +144,34 @@ struct AboutSettingsTab: View {
                         .foregroundColor(.secondary)
                 }
                 .padding(.vertical, 4)
+            }
+
+            Section(header: Text("Diagnostics")) {
+                Toggle("Enable diagnostic logging", isOn: $diagnosticLoggingEnabled)
+                    .onChange(of: diagnosticLoggingEnabled) { _, newValue in
+                        DiagnosticLogger.shared.isEnabled = newValue
+                    }
+                Text("Writes app lifecycle and recording/transcription events to a log file — useful when reporting an issue. Off by default; does not include transcript text.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                HStack {
+                    Button("Reveal Log in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([DiagnosticLogger.shared.logFileURL])
+                    }
+                    Button("Clear Log") {
+                        showingClearLogConfirmation = true
+                    }
+                }
+                .padding(.top, 2)
+            }
+            .confirmationDialog(
+                "Clear the diagnostics log?",
+                isPresented: $showingClearLogConfirmation
+            ) {
+                Button("Clear Log", role: .destructive) {
+                    DiagnosticLogger.shared.clearLog()
+                }
+                Button("Cancel", role: .cancel) {}
             }
 
             Section(header: Text("Open Source Acknowledgments")) {

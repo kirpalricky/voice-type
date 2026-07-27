@@ -19,7 +19,13 @@ struct VoiceTypeApp: App {
     private let logger = OSLog(subsystem: "com.voicetype.app", category: "VoiceTypeApp")
 
     init() {
-        transcriptionCoordinator = TranscriptionCoordinator(
+        // Assigning through the property name (`self.foo = ...`) inside init() does not
+        // reliably install the value into @State's real backing storage — reads of the same
+        // property later in this same init(), or from closures capturing self here, can see
+        // the pre-assignment (nil) value. Assigning through the underscore-prefixed backing
+        // storage (`_foo = State(initialValue:)`) is the correct way to give a @State property
+        // a value computed from other properties inside init().
+        let coordinator = TranscriptionCoordinator(
             appState: appState,
             audioRecorder: audioRecorder,
             transcriber: transcriber,
@@ -29,7 +35,9 @@ struct VoiceTypeApp: App {
             logger: OSLog(subsystem: "com.voicetype.app", category: "TranscriptionCoordinator"),
             onHideResultPanel: { [self] in resultPanelWindow?.hide() }
         )
-        hotkeyManager = HotkeyManager(
+        _transcriptionCoordinator = State(initialValue: coordinator)
+
+        _hotkeyManager = State(initialValue: HotkeyManager(
             onKeyDown: { [self] in
                 Task {
                     await self.transcriptionCoordinator?.startRecording()
@@ -38,7 +46,7 @@ struct VoiceTypeApp: App {
             onKeyUp: { [self] in
                 self.transcriptionCoordinator?.stopRecordingSync()
             }
-        )
+        ))
     }
 
     var body: some Scene {
@@ -47,7 +55,10 @@ struct VoiceTypeApp: App {
                 appState: appState,
                 onSettings: { openSettings() },
                 onShowHistory: openHistory,
-                onToggleRecording: { transcriptionCoordinator?.toggleRecordingSync() }
+                onToggleRecording: {
+                    DiagnosticLogger.shared.log("Menu 'Start/Stop Recording' clicked, transcriptionCoordinator is nil: \(transcriptionCoordinator == nil)")
+                    transcriptionCoordinator?.toggleRecordingSync()
+                }
             )
         }
         .menuBarExtraStyle(.window)

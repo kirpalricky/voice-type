@@ -38,6 +38,7 @@ actor Transcriber {
             encoderPrecision: .int8
         )
 
+        DiagnosticLogger.shared.log("Transcriber.initialize() Loading Parakeet Unified ASR model...")
         os_log("Loading Parakeet Unified ASR model...", log: self.logger, type: .info)
         onProgress?("Checking speech model…")
 
@@ -60,6 +61,7 @@ actor Transcriber {
         self.isInitialized = true
 
         onProgress?("Speech model ready")
+        DiagnosticLogger.shared.log("Transcriber.initialize() Parakeet model initialized successfully")
         os_log("Parakeet model initialized successfully", log: self.logger, type: .info)
     }
 
@@ -108,13 +110,16 @@ actor Transcriber {
             return ""
         }
 
+        DiagnosticLogger.shared.log("Transcriber.transcribe() starting with \(samples.count) samples")
         os_log("Transcribing %d audio samples", log: self.logger, type: .debug, samples.count)
 
         do {
             let transcript = try await manager.transcribe(samples)
+            DiagnosticLogger.shared.log("Transcriber.transcribe() completed: \(transcript.count) chars")
             os_log("Transcription complete: %d chars", log: self.logger, type: .info, transcript.count)
             return transcript
         } catch {
+            DiagnosticLogger.shared.log("Transcriber.transcribe() failed: \(error.localizedDescription)")
             os_log("Transcription failed: %@", log: self.logger, type: .error, error.localizedDescription)
             throw TranscriberError.transcriptionFailed(error.localizedDescription)
         }

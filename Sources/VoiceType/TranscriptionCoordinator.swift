@@ -36,7 +36,9 @@ final class TranscriptionCoordinator {
     }
 
     func startRecording() async {
+        DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() entered")
         guard await hasMicrophoneAccess() else {
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() - mic access denied")
             os_log("Microphone access not granted", log: self.logger, type: .error)
             appState.processingError = "Microphone access is required. Enable it in System Settings > Privacy & Security > Microphone."
             appState.showingResultPanel = true
@@ -47,12 +49,15 @@ final class TranscriptionCoordinator {
             appState.isRecording = true
             appState.processingError = nil
             appState.resetLevels()
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() calling audioRecorder.startRecording()")
             try await audioRecorder.startRecording(onBands: { [appState] bands in
                 Task { @MainActor in
                     appState.latestBands = bands
                 }
             })
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() audioRecorder.startRecording() succeeded, isRecording=\(appState.isRecording)")
         } catch {
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() audioRecorder.startRecording() THREW: \(error)")
             os_log("Failed to start recording: %@", log: self.logger, type: .error, error.localizedDescription)
             appState.isRecording = false
             appState.processingError = "Couldn't start recording: \(error.localizedDescription)"
@@ -87,9 +92,11 @@ final class TranscriptionCoordinator {
     }
 
     func stopRecordingAndTranscribe() async {
+        DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() entered")
         do {
             // Stop recording and get audio samples
             let audioSamples = try await audioRecorder.stopRecording()
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() got \(audioSamples.count) samples")
             appState.isRecording = false
 
             guard !audioSamples.isEmpty else {
@@ -162,6 +169,7 @@ final class TranscriptionCoordinator {
             appState.elapsedRecordingSeconds = 0
 
         } catch is CancellationError {
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() CAUGHT CancellationError")
             os_log("Processing cancelled by user", log: self.logger, type: .info)
             appState.isRecording = false
             appState.isProcessing = false
@@ -172,6 +180,7 @@ final class TranscriptionCoordinator {
             // leave a blank panel on screen.
             onHideResultPanel()
         } catch {
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() CAUGHT error: \(error)")
             os_log("Transcription error: %@", log: self.logger, type: .error, error.localizedDescription)
             appState.isRecording = false
             appState.isProcessing = false
@@ -181,6 +190,7 @@ final class TranscriptionCoordinator {
     }
 
     func toggleRecording() async {
+        DiagnosticLogger.shared.log("TranscriptionCoordinator.toggleRecording() entered, isRecording=\(appState.isRecording)")
         if appState.isRecording {
             await stopRecordingAndTranscribe()
         } else {

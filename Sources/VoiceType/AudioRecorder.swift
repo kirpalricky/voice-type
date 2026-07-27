@@ -71,13 +71,17 @@ actor AudioRecorder {
         // that same cold start on every retry — so a single short wait fails the same way
         // every time. Give it a generous wait, and if that still comes up dry, tear down
         // and spin up one more fresh engine before finally giving up.
+        DiagnosticLogger.shared.log("AudioRecorder.startRecording() attempting to start recording with retries")
         for attempt in 0..<2 {
             if try await attemptStartRecording(onBands: onBands) {
+                DiagnosticLogger.shared.log("AudioRecorder.startRecording() audio engine started successfully on attempt \(attempt)")
                 os_log("Audio recording started", log: self.logger, type: .info)
                 return
             }
+            DiagnosticLogger.shared.log("AudioRecorder.startRecording() Mic delivered no audio on attempt \(attempt), retrying")
             os_log("Mic delivered no audio on attempt %d, retrying", log: self.logger, type: .error, attempt)
         }
+        DiagnosticLogger.shared.log("AudioRecorder.startRecording() all retries exhausted, throwing formatNotAvailable")
         throw AudioRecorderError.formatNotAvailable
     }
 
@@ -133,6 +137,7 @@ actor AudioRecorder {
 
     /// Stop recording and return the captured audio samples
     func stopRecording() throws -> [Float] {
+        DiagnosticLogger.shared.log("AudioRecorder.stopRecording() starting")
         guard let engine = audioEngine else {
             throw AudioRecorderError.engineNotInitialized
         }
@@ -145,6 +150,7 @@ actor AudioRecorder {
         onBands = nil
         audioEngine = nil
 
+        DiagnosticLogger.shared.log("AudioRecorder.stopRecording() stopped, captured \(self.audioBuffer.count) samples")
         os_log("Audio recording stopped, captured %d samples", log: self.logger, type: .info, self.audioBuffer.count)
 
         return audioBuffer
