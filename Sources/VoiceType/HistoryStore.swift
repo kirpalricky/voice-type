@@ -23,15 +23,20 @@ struct HistoryEntry: Codable, Identifiable {
 
 /// Persists a rolling history of transcriptions and their source audio to
 /// `~/Library/Application Support/VoiceType/`.
+@MainActor
 @Observable
 final class HistoryStore {
     @ObservationIgnored private let fileManager = FileManager.default
     @ObservationIgnored private let logger = OSLog(subsystem: "com.voicetype.history", category: "HistoryStore")
     @ObservationIgnored private let maxEntries = 100
+    @ObservationIgnored private let baseDirectoryOverride: URL?
 
     var entries: [HistoryEntry] = []
 
     var baseDir: URL {
+        if let override = baseDirectoryOverride {
+            return override
+        }
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return appSupport.appendingPathComponent("VoiceType", isDirectory: true)
     }
@@ -44,7 +49,8 @@ final class HistoryStore {
         baseDir.appendingPathComponent("history.json")
     }
 
-    init() {
+    init(baseDirectoryOverride: URL? = nil) {
+        self.baseDirectoryOverride = baseDirectoryOverride
         load()
     }
 

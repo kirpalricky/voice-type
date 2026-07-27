@@ -23,24 +23,32 @@ struct GlossaryEntry: Codable, Identifiable {
 }
 
 /// Manages loading, saving, and accessing glossary entries from persistent storage
+@MainActor
 @Observable
 final class GlossaryStore {
     @ObservationIgnored private let fileManager = FileManager.default
     @ObservationIgnored private let logger = OSLog(subsystem: "com.voicetype.glossary", category: "GlossaryStore")
+    @ObservationIgnored private let baseDirectoryOverride: URL?
 
     var entries: [GlossaryEntry] = []
 
     private var glossaryURL: URL {
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let voiceTypeDir = appSupport.appendingPathComponent("VoiceType", isDirectory: true)
-        return voiceTypeDir.appendingPathComponent("glossary.json")
+        let baseDir: URL
+        if let override = baseDirectoryOverride {
+            baseDir = override
+        } else {
+            let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            baseDir = appSupport.appendingPathComponent("VoiceType", isDirectory: true)
+        }
+        return baseDir.appendingPathComponent("glossary.json")
     }
 
     private var glossaryDir: URL {
         glossaryURL.deletingLastPathComponent()
     }
 
-    init() {
+    init(baseDirectoryOverride: URL? = nil) {
+        self.baseDirectoryOverride = baseDirectoryOverride
         load()
     }
 
