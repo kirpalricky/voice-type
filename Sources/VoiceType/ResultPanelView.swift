@@ -106,7 +106,7 @@ struct ResultPanelView: View {
                         let idleFloor = 3 + 4 * CGFloat(pulse) + 3 * CGFloat(jitter)
                         let height = max(lvl * size.height, idleFloor)
 
-                        // Brightness tracks amplitude (loud = bright white, quiet = dim) with
+                        // Opacity tracks amplitude (loud = fully opaque, quiet = dim) with
                         // a gentle center-favoring fade so the row isn't uniformly flat. A
                         // gamma curve on `lvl` pushes quiet/mid bars down harder than a
                         // linear map would, widening the perceived loud/quiet contrast while
@@ -130,10 +130,10 @@ struct ResultPanelView: View {
                             let glowRect = rect.insetBy(dx: -1.5, dy: -1.5)
                             context.fill(
                                 Path(roundedRect: glowRect, cornerRadius: barWidth / 2 + 1.5),
-                                with: .color(.white.opacity(opacity * 0.18))
+                                with: .color(.primary.opacity(opacity * 0.18))
                             )
                         }
-                        context.fill(path, with: .color(.white.opacity(opacity)))
+                        context.fill(path, with: .color(.primary.opacity(opacity)))
                     }
                 }
 
