@@ -47,6 +47,12 @@ actor AudioRecorder {
     /// from the meter entirely rather than published as a spike.
     private var buffersSinceStart = 0
 
+    /// Bumped on every `attemptStartRecording` call. Lets `processAudioBuffer` reject
+    /// buffers from an engine that was abandoned after a start timeout but later started
+    /// anyway — without this, a late-arriving buffer from a stale engine could get appended
+    /// into a subsequent (unrelated) recording attempt's audio buffer.
+    private var recordingGeneration = 0
+
     /// Initialize the audio recorder
     init() {}
 
@@ -95,6 +101,8 @@ actor AudioRecorder {
         self.dcPrevIn = 0
         self.dcPrevOut = 0
         self.buffersSinceStart = 0
+        recordingGeneration += 1
+        let myGeneration = recordingGeneration
 
         let inputNode = engine.inputNode
         let format = inputNode.inputFormat(forBus: 0)
@@ -112,12 +120,25 @@ actor AudioRecorder {
             format: format
         ) { [weak self] buffer, _ in
             Task {
-                await self?.processAudioBuffer(buffer)
+                await self?.processAudioBuffer(buffer, generation: myGeneration)
             }
         }
 
-        // Start the audio engine
-        try engine.start()
+        // Start the audio engine. `engine.start()` can block indefinitely instead of
+        // throwing when the input route is unavailable (e.g. built-in mic disabled by
+        // clamshell mode with no external mic) — give up after a bounded wait rather than
+        // hanging this actor (and the whole recording UI) forever. Ownership of `engine`
+        // stays with whichever task actually calls `start()`: if we give up on it here, we
+        // never touch it again — cleanup for a late success happens inside
+        // `startEngineWithTimeout` itself, on the same task that started it, so the engine
+        // is never accessed from two places concurrently.
+        let started = await startEngineWithTimeout(engine: engine, inputNode: inputNode, seconds: 2)
+        guard started else {
+            DiagnosticLogger.shared.log("AudioRecorder.attemptStartRecording() engine.start() failed or timed out")
+            self.audioEngine = nil
+            self.onBands = nil
+            return false
+        }
 
         var attempts = 0
         while !hasReceivedFirstBuffer && attempts < 40 {
@@ -133,6 +154,41 @@ actor AudioRecorder {
         }
 
         return true
+    }
+
+    /// Starts `engine` and waits up to `seconds` for `start()` to return. If it hasn't
+    /// returned by then, this reports failure and moves on — but the detached task keeps
+    /// running `start()` to completion regardless, since Swift has no way to force-cancel a
+    /// blocking synchronous call. If that abandoned `start()` eventually succeeds, teardown
+    /// (`removeTap`/`stop`) happens right there on that same task, never from the caller —
+    /// so the engine is never touched from two places at once.
+    private func startEngineWithTimeout(engine: AVAudioEngine, inputNode: AVAudioInputNode, seconds: TimeInterval) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let raceGuard = SingleClaim()
+            Task.detached {
+                do {
+                    try engine.start()
+                    if await raceGuard.claim() {
+                        continuation.resume(returning: true)
+                    } else {
+                        // Lost the race: the caller already gave up on this engine, so
+                        // tearing it down is our job alone now.
+                        inputNode.removeTap(onBus: 0)
+                        engine.stop()
+                    }
+                } catch {
+                    if await raceGuard.claim() {
+                        continuation.resume(returning: false)
+                    }
+                }
+            }
+            Task.detached {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                if await raceGuard.claim() {
+                    continuation.resume(returning: false)
+                }
+            }
+        }
     }
 
     /// Stop recording and return the captured audio samples
@@ -157,7 +213,8 @@ actor AudioRecorder {
     }
 
     /// Process incoming audio buffer and convert to 16kHz mono Float32
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, generation: Int) {
+        guard generation == recordingGeneration else { return }
         guard let channelData = buffer.floatChannelData else {
             return
         }
@@ -365,6 +422,17 @@ actor AudioRecorder {
             engine.reset()
         }
         audioBuffer.removeAll()
+    }
+}
+
+/// Guarantees exactly one of two racing outcomes (engine start vs. timeout) gets to act.
+private actor SingleClaim {
+    private var claimed = false
+
+    func claim() -> Bool {
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }
 
