@@ -176,6 +176,7 @@ struct VocabularySettingsTab: View {
 
     @State private var newTerm = ""
     @State private var newVariants = ""
+    @State private var errorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -247,6 +248,16 @@ struct VocabularySettingsTab: View {
                 }
             }
         }
+        .alert("Error", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        ), presenting: errorMessage) { _ in
+            Button("OK") {
+                errorMessage = nil
+            }
+        } message: { errorMsg in
+            Text(errorMsg)
+        }
     }
 
     private func addEntry() {
@@ -259,14 +270,21 @@ struct VocabularySettingsTab: View {
             : variantsString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
 
         let entry = GlossaryEntry(canonical: term, variants: variants)
-        try? glossaryStore.add(entry)
-
-        newTerm = ""
-        newVariants = ""
+        do {
+            try glossaryStore.add(entry)
+            newTerm = ""
+            newVariants = ""
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func deleteEntry(at index: Int) {
-        try? glossaryStore.remove(at: index)
+        do {
+            try glossaryStore.remove(at: index)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
