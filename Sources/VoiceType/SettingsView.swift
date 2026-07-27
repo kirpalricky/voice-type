@@ -72,7 +72,17 @@ struct GeneralSettingsTab: View {
     var body: some View {
         Form {
             Section(header: Text("Hotkey")) {
-                KeyboardShortcuts.Recorder("Record hotkey:", name: .toggleRecording)
+                if HotkeyRecorderAvailability.isAvailable() {
+                    KeyboardShortcuts.Recorder("Record hotkey:", name: .toggleRecording)
+                } else {
+                    Label {
+                        Text("Hotkey recorder unavailable — please reinstall VoiceType.")
+                            .foregroundStyle(.orange)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
 
             Section(header: Text("Apple Intelligence")) {
