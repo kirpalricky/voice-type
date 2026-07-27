@@ -132,6 +132,8 @@ actor Transcriber {
     }
 }
 
+extension Transcriber: Transcribing {}
+
 enum TranscriberError: LocalizedError {
     case notInitialized
     case transcriptionFailed(String)

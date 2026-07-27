@@ -362,6 +362,8 @@ actor AudioRecorder {
     }
 }
 
+extension AudioRecorder: AudioRecording {}
+
 enum AudioRecorderError: LocalizedError {
     case engineNotInitialized
     case formatNotAvailable
