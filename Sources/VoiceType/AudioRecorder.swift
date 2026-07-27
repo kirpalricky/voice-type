@@ -350,6 +350,17 @@ actor AudioRecorder {
         // than expected and any real speech saturates every band to 1.0 immediately.
         let fftPowerScale = Float(fftSize / 2) * Float(fftSize / 2)
         let minDb: Float = -50
+        // Floor for "no real signal at all" (a literal zero FFT peak, e.g. an all-zero
+        // buffer from an unavailable mic route) — must sit well below `gateFloorDb` so true
+        // silence still gates fully closed. Not the same scale as `minDb`, which calibrates
+        // the *tilted* (post-boost) signal for on-screen brightness, not raw signal presence.
+        let noSignalDb: Float = -120
+        // Gate floor for the RAW (pre-tilt) signal. Deliberately lower than `minDb`: real
+        // high-frequency voice content is naturally quiet in raw terms (that's the reason
+        // the tilt boost exists), so gating on `minDb` here was suppressing legitimate quiet
+        // high-frequency content along with true silence. This is an empirical starting
+        // value — may need tuning against real mic input.
+        let gateFloorDb: Float = -70
         let gateWidthDb: Float = 8
 
         // Zero out the bands buffer for reuse
@@ -363,9 +374,9 @@ actor AudioRecorder {
                 peak = max(peak, fftMagnitudes[bin])
             }
             let normalizedPeak = peak / fftPowerScale
-            let rawDb = normalizedPeak > 0 ? 10 * log10(normalizedPeak) : minDb
+            let rawDb = normalizedPeak > 0 ? 10 * log10(normalizedPeak) : noSignalDb
             // Soft noise gate: silence/noise bins must not light up just because the tilt boosts them.
-            let gate = max(0, min((rawDb - minDb) / gateWidthDb, 1.0))
+            let gate = max(0, min((rawDb - gateFloorDb) / gateWidthDb, 1.0))
             let tiltedDb = rawDb + bandTiltDb[band]
             let norm = max(0, min((tiltedDb - minDb) / -minDb, 1.0))
             bandsMagnitudes[band] = norm * gate
