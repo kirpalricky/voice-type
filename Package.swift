@@ -23,6 +23,7 @@ let package = Package(
             name: "VoiceTypeTests",
             dependencies: [
                 "VoiceType",
+                .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "Testing", package: "swift-testing")
             ]
         )
