@@ -293,6 +293,7 @@ actor AudioRecorder {
         // than expected and any real speech saturates every band to 1.0 immediately.
         let fftPowerScale = Float(fftSize / 2) * Float(fftSize / 2)
         let minDb: Float = -50
+        let gateWidthDb: Float = 8
 
         // Zero out the bands buffer for reuse
         vDSP_vclr(&bandsMagnitudes, 1, vDSP_Length(numBands))
@@ -305,8 +306,12 @@ actor AudioRecorder {
                 peak = max(peak, fftMagnitudes[bin])
             }
             let normalizedPeak = peak / fftPowerScale
-            let db = (normalizedPeak > 0 ? 10 * log10(normalizedPeak) : minDb) + bandTiltDb[band]
-            bandsMagnitudes[band] = max(0, min((db - minDb) / -minDb, 1.0))
+            let rawDb = normalizedPeak > 0 ? 10 * log10(normalizedPeak) : minDb
+            // Soft noise gate: silence/noise bins must not light up just because the tilt boosts them.
+            let gate = max(0, min((rawDb - minDb) / gateWidthDb, 1.0))
+            let tiltedDb = rawDb + bandTiltDb[band]
+            let norm = max(0, min((tiltedDb - minDb) / -minDb, 1.0))
+            bandsMagnitudes[band] = norm * gate
         }
 
         return bandsMagnitudes
