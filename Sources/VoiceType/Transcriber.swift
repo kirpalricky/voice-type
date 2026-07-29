@@ -40,7 +40,7 @@ actor Transcriber {
 
         DiagnosticLogger.shared.log("Transcriber.initialize() Loading Parakeet Unified ASR model...")
         os_log("Loading Parakeet Unified ASR model...", log: self.logger, type: .info)
-        onProgress?("Checking speech model…")
+        onProgress?("Loading speech model…")
 
         try await manager.loadModels(to: nil, configuration: nil) { progress in
             let percent = Int(progress.fractionCompleted * 100)
