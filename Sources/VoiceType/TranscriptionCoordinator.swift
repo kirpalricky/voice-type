@@ -37,9 +37,13 @@ final class TranscriptionCoordinator {
 
     /// Kicks off model download/load in the background as soon as the app launches, instead
     /// of waiting for the first `stopRecordingAndTranscribe()` call, so a fresh install isn't
-    /// stuck waiting on a multi-hundred-MB download mid-recording. `Transcriber.initialize()`
-    /// is idempotent, so the later call in `stopRecordingAndTranscribe()` is a fast no-op once
-    /// this succeeds, and simply retries if this failed.
+    /// stuck waiting on a multi-hundred-MB download mid-recording. The later call in
+    /// `stopRecordingAndTranscribe()` is a fast no-op once this succeeds, and simply retries
+    /// if this failed. Note `Transcriber.initialize()`'s `guard !isInitialized` only protects
+    /// against *sequential* re-entry, not concurrent calls (the flag flips after the download
+    /// completes, not before) — that's fine today because `startRecording()` is gated on
+    /// `isModelLoading` so nothing can reach the second call path until this one has finished,
+    /// but don't assume it'd be safe to call `initialize()` from two places concurrently.
     func preloadModel() async {
         DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() entered")
         do {
