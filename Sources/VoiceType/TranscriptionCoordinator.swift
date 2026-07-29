@@ -35,8 +35,34 @@ final class TranscriptionCoordinator {
         self.onHideResultPanel = onHideResultPanel
     }
 
+    /// Kicks off model download/load in the background as soon as the app launches, instead
+    /// of waiting for the first `stopRecordingAndTranscribe()` call, so a fresh install isn't
+    /// stuck waiting on a multi-hundred-MB download mid-recording. `Transcriber.initialize()`
+    /// is idempotent, so the later call in `stopRecordingAndTranscribe()` is a fast no-op once
+    /// this succeeds, and simply retries if this failed.
+    func preloadModel() async {
+        DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() entered")
+        do {
+            try await transcriber.initialize(onProgress: { [appState] status in
+                Task { @MainActor in
+                    appState.modelLoadStatus = status
+                }
+            })
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() succeeded")
+        } catch {
+            os_log("Model preload failed: %@", log: self.logger, type: .error, error.localizedDescription)
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() failed: \(error)")
+        }
+        appState.isModelLoading = false
+        appState.modelLoadStatus = ""
+    }
+
     func startRecording() async {
         DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() entered")
+        guard !appState.isModelLoading else {
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() blocked - model still loading")
+            return
+        }
         guard await hasMicrophoneAccess() else {
             DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() - mic access denied")
             os_log("Microphone access not granted", log: self.logger, type: .error)

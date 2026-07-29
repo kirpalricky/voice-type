@@ -47,6 +47,12 @@ struct VoiceTypeApp: App {
                 self.transcriptionCoordinator?.stopRecordingSync()
             }
         ))
+
+        // Start downloading/loading the Parakeet model as soon as the app launches instead of
+        // waiting for the first recording, so a fresh install isn't stuck waiting mid-recording.
+        Task {
+            await coordinator.preloadModel()
+        }
     }
 
     var body: some Scene {
@@ -55,6 +61,7 @@ struct VoiceTypeApp: App {
                 appState: appState,
                 onSettings: { openSettings() },
                 onShowHistory: openHistory,
+                onShowAbout: { openSettings(section: .about) },
                 onToggleRecording: {
                     DiagnosticLogger.shared.log("Menu 'Start/Stop Recording' clicked, transcriptionCoordinator is nil: \(transcriptionCoordinator == nil)")
                     transcriptionCoordinator?.toggleRecordingSync()
@@ -82,6 +89,8 @@ struct VoiceTypeApp: App {
     private var menuBarIcon: String {
         if appState.isRecording {
             return "waveform.circle.fill"
+        } else if appState.isModelLoading {
+            return "arrow.down.circle"
         } else if appState.isProcessing {
             return "arrow.triangle.2.circlepath"
         } else {
@@ -144,12 +153,22 @@ struct VoiceTypeMenuView: View {
     var appState: AppState
     var onSettings: () -> Void
     var onShowHistory: () -> Void
+    var onShowAbout: () -> Void
     var onToggleRecording: () -> Void
 
     @State private var recordingRowHovering = false
     @State private var historyRowHovering = false
     @State private var settingsRowHovering = false
     @State private var quitRowHovering = false
+    @State private var versionRowHovering = false
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+
+    private var appBuild: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+    }
 
     private var recordingHotkeyHint: String {
         if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
@@ -174,10 +193,13 @@ struct VoiceTypeMenuView: View {
             // Start/Stop Recording button
             Button(action: onToggleRecording) {
                 HStack {
-                    Text(appState.isRecording ? "Stop Recording" : "Start Recording")
+                    Text(appState.isModelLoading ? "Loading speech model…" : (appState.isRecording ? "Stop Recording" : "Start Recording"))
                         .font(.system(size: 13))
                     Spacer()
-                    if !recordingHotkeyHint.isEmpty {
+                    if appState.isModelLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else if !recordingHotkeyHint.isEmpty {
                         Text(recordingHotkeyHint)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.secondary)
@@ -186,12 +208,15 @@ struct VoiceTypeMenuView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(appState.isModelLoading)
+            .opacity(appState.isModelLoading ? 0.5 : 1.0)
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
             .background(recordingRowHovering ? Color.gray.opacity(0.15) : Color.clear)
             .onHover { hovering in
                 recordingRowHovering = hovering
             }
+            .help(appState.isModelLoading ? appState.modelLoadStatus : "")
 
             // History button
             Button(action: onShowHistory) {
@@ -244,6 +269,24 @@ struct VoiceTypeMenuView: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
+
+            // Version button
+            Button(action: onShowAbout) {
+                HStack {
+                    Text("Version \(appVersion) (\(appBuild))")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .background(versionRowHovering ? Color.gray.opacity(0.15) : Color.clear)
+            .onHover { hovering in
+                versionRowHovering = hovering
+            }
 
             Divider()
 
