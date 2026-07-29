@@ -644,4 +644,35 @@ struct TranscriptionCoordinatorTests {
     // hasMicrophoneAccess(), which hits the real AVFoundation TCC prompt — not safe to
     // exercise in a unit test, so only the blocked (isModelLoading == true) path is covered
     // here.
+
+    @Test("stopRecordingSync is a no-op if recording never actually started")
+    func stopRecordingSyncNoOpWhenNotRecording() async {
+        let appState = AppState()
+        appState.isRecording = false // startRecording() no-op'd, e.g. blocked on isModelLoading
+
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let glossaryStore = GlossaryStore(baseDirectoryOverride: tempDir)
+        let historyStore = HistoryStore(baseDirectoryOverride: tempDir)
+
+        let audioRecorder = FakeAudioRecorder()
+        let transcriber = FakeTranscriber()
+        let polisher = FakePolisher()
+
+        let coordinator = createCoordinator(
+            audioRecorder: audioRecorder,
+            transcriber: transcriber,
+            polisher: polisher,
+            appState: appState,
+            glossaryStore: glossaryStore,
+            historyStore: historyStore
+        )
+
+        coordinator.stopRecordingSync()
+        await coordinator.processingTask?.value
+
+        #expect(audioRecorder.stopRecordingCallCount == 0)
+        #expect(appState.processingError == nil)
+        #expect(appState.showingResultPanel == false)
+    }
 }

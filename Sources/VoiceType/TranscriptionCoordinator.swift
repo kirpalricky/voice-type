@@ -237,6 +237,12 @@ final class TranscriptionCoordinator {
     }
 
     func stopRecordingSync() {
+        // Guards the case where `startRecording()` no-op'd (e.g. blocked on
+        // `isModelLoading`) so recording never actually began: without this, a hotkey
+        // key-up or the panel's Stop button would still call `stopRecordingAndTranscribe()`,
+        // which throws `engineNotInitialized` since the audio engine was never created,
+        // popping a spurious error panel.
+        guard appState.isRecording else { return }
         processingTask = Task {
             await stopRecordingAndTranscribe()
         }
