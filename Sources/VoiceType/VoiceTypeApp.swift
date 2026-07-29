@@ -47,6 +47,12 @@ struct VoiceTypeApp: App {
                 self.transcriptionCoordinator?.stopRecordingSync()
             }
         ))
+
+        // Start downloading/loading the Parakeet model as soon as the app launches instead of
+        // waiting for the first recording, so a fresh install isn't stuck waiting mid-recording.
+        Task {
+            await coordinator.preloadModel()
+        }
     }
 
     var body: some Scene {
@@ -83,6 +89,8 @@ struct VoiceTypeApp: App {
     private var menuBarIcon: String {
         if appState.isRecording {
             return "waveform.circle.fill"
+        } else if appState.isModelLoading {
+            return "arrow.down.circle"
         } else if appState.isProcessing {
             return "arrow.triangle.2.circlepath"
         } else {
@@ -162,6 +170,10 @@ struct VoiceTypeMenuView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
 
+    private var modelLoadingLabel: String {
+        appState.modelLoadStatus.isEmpty ? "Loading speech model…" : appState.modelLoadStatus
+    }
+
     private var recordingHotkeyHint: String {
         if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
             return shortcut.description
@@ -185,10 +197,14 @@ struct VoiceTypeMenuView: View {
             // Start/Stop Recording button
             Button(action: onToggleRecording) {
                 HStack {
-                    Text(appState.isRecording ? "Stop Recording" : "Start Recording")
+                    Text(appState.isModelLoading ? modelLoadingLabel : (appState.isRecording ? "Stop Recording" : "Start Recording"))
                         .font(.system(size: 13))
+                        .lineLimit(1)
                     Spacer()
-                    if !recordingHotkeyHint.isEmpty {
+                    if appState.isModelLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else if !recordingHotkeyHint.isEmpty {
                         Text(recordingHotkeyHint)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.secondary)
@@ -197,6 +213,8 @@ struct VoiceTypeMenuView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(appState.isModelLoading)
+            .opacity(appState.isModelLoading ? 0.5 : 1.0)
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
             .background(recordingRowHovering ? Color.gray.opacity(0.15) : Color.clear)

@@ -13,6 +13,11 @@ final class AppState {
     var statusMessage: String = ""
     var processingError: String?
 
+    /// True from launch until the Parakeet model has finished loading (or failed to), so the
+    /// UI can disable "Start Recording" instead of letting it silently no-op on first use.
+    var isModelLoading: Bool = true
+    var modelLoadStatus: String = "Loading speech model…"
+
     static let barCount = 56
 
     /// Latest raw per-band magnitudes from the audio tap's FFT (see `AudioRecorder`), written

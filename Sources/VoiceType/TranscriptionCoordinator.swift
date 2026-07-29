@@ -35,8 +35,38 @@ final class TranscriptionCoordinator {
         self.onHideResultPanel = onHideResultPanel
     }
 
+    /// Kicks off model download/load in the background as soon as the app launches, instead
+    /// of waiting for the first `stopRecordingAndTranscribe()` call, so a fresh install isn't
+    /// stuck waiting on a multi-hundred-MB download mid-recording. The later call in
+    /// `stopRecordingAndTranscribe()` is a fast no-op once this succeeds, and simply retries
+    /// if this failed. Note `Transcriber.initialize()`'s `guard !isInitialized` only protects
+    /// against *sequential* re-entry, not concurrent calls (the flag flips after the download
+    /// completes, not before) — that's fine today because `startRecording()` is gated on
+    /// `isModelLoading` so nothing can reach the second call path until this one has finished,
+    /// but don't assume it'd be safe to call `initialize()` from two places concurrently.
+    func preloadModel() async {
+        DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() entered")
+        do {
+            try await transcriber.initialize(onProgress: { [appState] status in
+                Task { @MainActor in
+                    appState.modelLoadStatus = status
+                }
+            })
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() succeeded")
+        } catch {
+            os_log("Model preload failed: %@", log: self.logger, type: .error, error.localizedDescription)
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() failed: \(error)")
+        }
+        appState.isModelLoading = false
+        appState.modelLoadStatus = ""
+    }
+
     func startRecording() async {
         DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() entered")
+        guard !appState.isModelLoading else {
+            DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() blocked - model still loading")
+            return
+        }
         guard await hasMicrophoneAccess() else {
             DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() - mic access denied")
             os_log("Microphone access not granted", log: self.logger, type: .error)
@@ -211,6 +241,12 @@ final class TranscriptionCoordinator {
     }
 
     func stopRecordingSync() {
+        // Guards the case where `startRecording()` no-op'd (e.g. blocked on
+        // `isModelLoading`) so recording never actually began: without this, a hotkey
+        // key-up or the panel's Stop button would still call `stopRecordingAndTranscribe()`,
+        // which throws `engineNotInitialized` since the audio engine was never created,
+        // popping a spurious error panel.
+        guard appState.isRecording else { return }
         processingTask = Task {
             await stopRecordingAndTranscribe()
         }

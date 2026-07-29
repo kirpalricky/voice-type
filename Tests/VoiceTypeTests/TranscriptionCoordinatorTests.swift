@@ -549,4 +549,130 @@ struct TranscriptionCoordinatorTests {
         // but we can verify the entry has an audio file)
         #expect(entry.audioFileName != nil)
     }
+
+    // MARK: - Test: Preload Model
+
+    @Test("preloadModel initializes transcriber and clears isModelLoading")
+    func preloadModelSucceeds() async {
+        let appState = AppState()
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let glossaryStore = GlossaryStore(baseDirectoryOverride: tempDir)
+        let historyStore = HistoryStore(baseDirectoryOverride: tempDir)
+
+        let audioRecorder = FakeAudioRecorder()
+        let transcriber = FakeTranscriber()
+        let polisher = FakePolisher()
+
+        let coordinator = createCoordinator(
+            audioRecorder: audioRecorder,
+            transcriber: transcriber,
+            polisher: polisher,
+            appState: appState,
+            glossaryStore: glossaryStore,
+            historyStore: historyStore
+        )
+
+        #expect(appState.isModelLoading == true)
+
+        await coordinator.preloadModel()
+
+        #expect(transcriber.initializeCallCount == 1)
+        #expect(appState.isModelLoading == false)
+        #expect(appState.modelLoadStatus == "")
+    }
+
+    @Test("preloadModel clears isModelLoading even when initialize fails, allowing lazy retry")
+    func preloadModelFailureStillClearsLoadingFlag() async {
+        let appState = AppState()
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let glossaryStore = GlossaryStore(baseDirectoryOverride: tempDir)
+        let historyStore = HistoryStore(baseDirectoryOverride: tempDir)
+
+        let audioRecorder = FakeAudioRecorder()
+        let transcriber = FakeTranscriber()
+        transcriber.initializeError = TestError.unknown
+        let polisher = FakePolisher()
+
+        let coordinator = createCoordinator(
+            audioRecorder: audioRecorder,
+            transcriber: transcriber,
+            polisher: polisher,
+            appState: appState,
+            glossaryStore: glossaryStore,
+            historyStore: historyStore
+        )
+
+        await coordinator.preloadModel()
+
+        #expect(appState.isModelLoading == false)
+    }
+
+    // MARK: - Test: startRecording Gated on Model Loading
+
+    @Test("startRecording is a no-op while the model is still loading")
+    func startRecordingBlockedWhileModelLoading() async {
+        let appState = AppState()
+        #expect(appState.isModelLoading == true)
+
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let glossaryStore = GlossaryStore(baseDirectoryOverride: tempDir)
+        let historyStore = HistoryStore(baseDirectoryOverride: tempDir)
+
+        let audioRecorder = FakeAudioRecorder()
+        let transcriber = FakeTranscriber()
+        let polisher = FakePolisher()
+
+        let coordinator = createCoordinator(
+            audioRecorder: audioRecorder,
+            transcriber: transcriber,
+            polisher: polisher,
+            appState: appState,
+            glossaryStore: glossaryStore,
+            historyStore: historyStore
+        )
+
+        await coordinator.startRecording()
+
+        #expect(audioRecorder.startRecordingCallCount == 0)
+        #expect(appState.isRecording == false)
+    }
+
+    // Note: the "model finished loading" path of startRecording() also calls
+    // hasMicrophoneAccess(), which hits the real AVFoundation TCC prompt — not safe to
+    // exercise in a unit test, so only the blocked (isModelLoading == true) path is covered
+    // here.
+
+    @Test("stopRecordingSync is a no-op if recording never actually started")
+    func stopRecordingSyncNoOpWhenNotRecording() async {
+        let appState = AppState()
+        appState.isRecording = false // startRecording() no-op'd, e.g. blocked on isModelLoading
+
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let glossaryStore = GlossaryStore(baseDirectoryOverride: tempDir)
+        let historyStore = HistoryStore(baseDirectoryOverride: tempDir)
+
+        let audioRecorder = FakeAudioRecorder()
+        let transcriber = FakeTranscriber()
+        let polisher = FakePolisher()
+
+        let coordinator = createCoordinator(
+            audioRecorder: audioRecorder,
+            transcriber: transcriber,
+            polisher: polisher,
+            appState: appState,
+            glossaryStore: glossaryStore,
+            historyStore: historyStore
+        )
+
+        coordinator.stopRecordingSync()
+        await coordinator.processingTask?.value
+
+        #expect(audioRecorder.stopRecordingCallCount == 0)
+        #expect(appState.processingError == nil)
+        #expect(appState.showingResultPanel == false)
+    }
 }
