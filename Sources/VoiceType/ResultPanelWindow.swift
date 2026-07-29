@@ -37,6 +37,10 @@ class ResultPanelWindow {
             panel.hidesOnDeactivate = false
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.backgroundColor = .clear
+            // The SwiftUI card draws its own shadow inset within the panel's clear canvas;
+            // AppKit's default window shadow would additionally outline the full canvas bounds,
+            // producing a ghosted double-outline behind the card.
+            panel.hasShadow = false
 
             // Enable dragging by clicking on background areas
             panel.isMovable = true

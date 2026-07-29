@@ -7,10 +7,38 @@ struct ResultPanelView: View {
     var onStopRecording: () -> Void
     var onDismissError: () -> Void
 
-    @State private var isBlinking = false
+    @State private var isPinging = false
+    @Namespace private var segmentNamespace
+
+    // MARK: - Design constants
+
+    /// The panel renders inside a single fixed canvas in every state so the window never
+    /// resizes as content changes. `outerMargin` reserves room for the drop shadow to breathe
+    /// against the (clear) NSPanel background; `Metrics.canvas*` must match the panel's
+    /// contentRect in ResultPanelWindow.
+    private enum Metrics {
+        static let canvasWidth: CGFloat = 400
+        static let canvasHeight: CGFloat = 240
+        static let outerMargin: CGFloat = 12
+        static let cornerRadius: CGFloat = 18
+        static let contentPadding: CGFloat = 18
+    }
 
     var body: some View {
-        VStack(spacing: 12) {
+        ZStack {
+            content
+                .padding(Metrics.contentPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(cardBackground)
+        .padding(Metrics.outerMargin)
+        .frame(width: Metrics.canvasWidth, height: Metrics.canvasHeight, alignment: .top)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        Group {
             if appState.isRecording {
                 recordingView
             } else if appState.isProcessing {
@@ -21,56 +49,87 @@ struct ResultPanelView: View {
                 resultView
             }
         }
-        .padding(12)
-        .frame(maxWidth: 400)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
-        .shadow(radius: 8)
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.22), value: stateID)
     }
 
-    private var recordingView: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                // Pulsing red dot
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 10, height: 10)
-                    .opacity(isBlinking ? 1.0 : 0.5)
-                    .animation(.easeInOut(duration: 0.6).repeatForever(), value: isBlinking)
+    /// Distinguishes the four render states so the crossfade only fires on real transitions.
+    private var stateID: Int {
+        if appState.isRecording { return 0 }
+        if appState.isProcessing { return 1 }
+        if appState.processingError != nil { return 2 }
+        return 3
+    }
 
-                Text("Recording…")
-                    .font(.system(.body, design: .default))
+    // MARK: - Card chrome
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: Metrics.cornerRadius, style: .continuous)
+            .fill(.regularMaterial)
+            .overlay(
+                // Hairline that reads as a crisp edge in both appearances, since the panel
+                // floats over arbitrary desktop content.
+                RoundedRectangle(cornerRadius: Metrics.cornerRadius, style: .continuous)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.28), radius: 11, x: 0, y: 5)
+    }
+
+    // MARK: - Recording
+
+    private var recordingView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                recordingIndicator
+
+                Text("Recording")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
 
                 Spacer()
 
                 Text(formattedTime)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(.quaternary.opacity(0.6)))
             }
 
-            levelMeter
+            levelMeter(tint: .red)
+                .frame(maxHeight: .infinity)
 
             HStack {
                 Spacer()
                 Button(action: onStopRecording) {
                     Label("Stop", systemImage: "stop.fill")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .buttonStyle(FilledButtonStyle(tint: .red, fullWidth: false))
+                Spacer()
             }
         }
-        .onAppear {
-            isBlinking = true
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Solid red dot with a radar-style ping ring — a calmer, more intentional "live" cue
+    /// than a hard blink.
+    private var recordingIndicator: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.red, lineWidth: 1.5)
+                .frame(width: 10, height: 10)
+                .scaleEffect(isPinging ? 2.2 : 1)
+                .opacity(isPinging ? 0 : 0.7)
+                .animation(.easeOut(duration: 1.4).repeatForever(autoreverses: false), value: isPinging)
+
+            Circle()
+                .fill(Color.red)
+                .frame(width: 10, height: 10)
+                .shadow(color: .red.opacity(0.6), radius: 3)
         }
-        .task(id: appState.isRecording) {
-            // Paces the per-band envelope at a fixed cadence, decoupled from the audio tap's
-            // own ~100ms buffer jitter, so bars advance evenly instead of in uneven bursts.
-            guard appState.isRecording else { return }
-            while !Task.isCancelled {
-                appState.pushLevel()
-                try? await Task.sleep(nanoseconds: 33_000_000) // ~30fps
-            }
-        }
+        .frame(width: 24, height: 24)
+        .onAppear { isPinging = true }
     }
 
     /// Live standing-wave meter: bars sit at fixed positions and pulse in place, each driven
@@ -82,7 +141,7 @@ struct ResultPanelView: View {
     /// the shape from ~200ms ago is drawn underneath for extra depth. Single Canvas pass —
     /// no per-view identity, no animation modifiers (both caused a "wiggle" bug earlier);
     /// bar positions/widths are pixel-snapped (fractional edges caused a Moiré bug earlier).
-    private var levelMeter: some View {
+    private func levelMeter(tint: Color) -> some View {
         TimelineView(.animation) { timeline in
             Canvas { context, size in
                 let barCount = appState.barLevels.count
@@ -130,10 +189,10 @@ struct ResultPanelView: View {
                             let glowRect = rect.insetBy(dx: -1.5, dy: -1.5)
                             context.fill(
                                 Path(roundedRect: glowRect, cornerRadius: barWidth / 2 + 1.5),
-                                with: .color(.primary.opacity(opacity * 0.18))
+                                with: .color(tint.opacity(opacity * 0.18))
                             )
                         }
-                        context.fill(path, with: .color(.primary.opacity(opacity)))
+                        context.fill(path, with: .color(tint.opacity(opacity)))
                     }
                 }
 
@@ -141,94 +200,157 @@ struct ResultPanelView: View {
                 draw(appState.barLevels, opacityScale: 1.0, glow: true)
             }
         }
-        .frame(height: 100)
+        .task(id: appState.isRecording) {
+            // Paces the per-band envelope at a fixed cadence, decoupled from the audio tap's
+            // own ~100ms buffer jitter, so bars advance evenly instead of in uneven bursts.
+            guard appState.isRecording else { return }
+            while !Task.isCancelled {
+                appState.pushLevel()
+                try? await Task.sleep(nanoseconds: 33_000_000) // ~30fps
+            }
+        }
     }
+
+    // MARK: - Processing
 
     private var processingView: some View {
-        HStack(spacing: 10) {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
             ProgressView()
-                .controlSize(.small)
+                .controlSize(.large)
+                .scaleEffect(1.1)
 
             Text(appState.statusMessage.isEmpty ? "Processing…" : appState.statusMessage)
-                .font(.system(.body, design: .default))
+                .font(.headline)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
+                .padding(.top, 16)
 
-            Spacer()
+            Text("Polishing your transcript on-device")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.top, 3)
 
-            Button(action: onCancel) {
-                Text("Cancel")
-            }
-            .buttonStyle(.bordered)
+            Spacer(minLength: 0)
+
+            Button("Cancel", action: onCancel)
+                .buttonStyle(GhostButtonStyle())
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    // MARK: - Error
 
     private func errorView(_ message: String) -> some View {
-        HStack(spacing: 10) {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.orange)
+                .font(.system(size: 30))
+                .foregroundStyle(.orange)
+
+            Text("Something went wrong")
+                .font(.headline)
+                .padding(.top, 12)
 
             Text(message)
-                .font(.system(.body, design: .default))
-                .lineLimit(2)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .padding(.top, 3)
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            Button(action: onDismissError) {
-                Image(systemName: "xmark")
-                    .frame(width: 20, height: 20)
-            }
-            .buttonStyle(.bordered)
-            .help("Dismiss")
+            Button("Dismiss", action: onDismissError)
+                .buttonStyle(GhostButtonStyle())
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    // MARK: - Result
 
     private var resultView: some View {
         VStack(spacing: 12) {
-            // Segmented control
-            HStack {
-                Button(action: { appState.showingRawInPanel = false }) {
-                    Text("Polished")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .tint(appState.showingRawInPanel ? .gray : .blue)
+            segmentedControl
 
-                Button(action: { appState.showingRawInPanel = true }) {
-                    Text("Raw")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .tint(appState.showingRawInPanel ? .blue : .gray)
-            }
+            transcriptWell
 
-            // Text display
-            ScrollView {
-                Text(appState.showingRawInPanel ? appState.rawTranscript : appState.polishedTranscript)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .font(.system(.body, design: .default))
-                    .padding(8)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .cornerRadius(4)
-            }
-            .frame(minHeight: 60, maxHeight: 150)
-
-            // Action buttons
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Button(action: copyToClipboard) {
                     Label("Copy", systemImage: "doc.on.doc")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(FilledButtonStyle(tint: .accentColor, fullWidth: true))
 
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .frame(width: 20, height: 20)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(QuietIconButtonStyle())
                 .help("Dismiss")
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    private var segmentedControl: some View {
+        HStack(spacing: 4) {
+            segment(title: "Polished", isSelected: !appState.showingRawInPanel) {
+                appState.showingRawInPanel = false
+            }
+            segment(title: "Raw", isSelected: appState.showingRawInPanel) {
+                appState.showingRawInPanel = true
+            }
+        }
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(.quaternary.opacity(0.5))
+        )
+    }
+
+    private func segment(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.snappy(duration: 0.25)) { action() }
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 5)
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(.background)
+                            .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                            .matchedGeometryEffect(id: "segmentHighlight", in: segmentNamespace)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var transcriptWell: some View {
+        ScrollView {
+            Text(appState.showingRawInPanel ? appState.rawTranscript : appState.polishedTranscript)
+                .font(.callout)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.black.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.primary.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Helpers
 
     private var formattedTime: String {
         let minutes = appState.elapsedRecordingSeconds / 60
@@ -241,5 +363,63 @@ struct ResultPanelView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
         onDismiss()
+    }
+}
+
+// MARK: - Button styles
+
+/// Solid, tinted, product-grade primary action. Uses the tint's gradient for a subtle
+/// dimensional sheen and a gentle press response.
+private struct FilledButtonStyle: ButtonStyle {
+    var tint: Color = .accentColor
+    var fullWidth: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: fullWidth ? .infinity : nil)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(tint.gradient)
+            )
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// Quiet, icon-only affordance (dismiss). Square with a faint recessed fill so it reads as
+/// tappable without competing with the primary action.
+private struct QuietIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 34, height: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(.quaternary.opacity(configuration.isPressed ? 0.9 : 0.45))
+            )
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.8 : 1)
+    }
+}
+
+/// Low-emphasis text button (Cancel / Dismiss on the centered states).
+private struct GhostButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 18)
+            .background(
+                Capsule().fill(.quaternary.opacity(configuration.isPressed ? 0.8 : 0.45))
+            )
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.8 : 1)
     }
 }
