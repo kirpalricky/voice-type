@@ -170,6 +170,10 @@ struct VoiceTypeMenuView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
 
+    private var modelLoadingLabel: String {
+        appState.modelLoadStatus.isEmpty ? "Loading speech model…" : appState.modelLoadStatus
+    }
+
     private var recordingHotkeyHint: String {
         if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
             return shortcut.description
@@ -193,8 +197,9 @@ struct VoiceTypeMenuView: View {
             // Start/Stop Recording button
             Button(action: onToggleRecording) {
                 HStack {
-                    Text(appState.isModelLoading ? "Loading speech model…" : (appState.isRecording ? "Stop Recording" : "Start Recording"))
+                    Text(appState.isModelLoading ? modelLoadingLabel : (appState.isRecording ? "Stop Recording" : "Start Recording"))
                         .font(.system(size: 13))
+                        .lineLimit(1)
                     Spacer()
                     if appState.isModelLoading {
                         ProgressView()
@@ -216,7 +221,6 @@ struct VoiceTypeMenuView: View {
             .onHover { hovering in
                 recordingRowHovering = hovering
             }
-            .help(appState.isModelLoading ? appState.modelLoadStatus : "")
 
             // History button
             Button(action: onShowHistory) {
