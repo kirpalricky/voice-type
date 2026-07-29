@@ -55,6 +55,7 @@ struct VoiceTypeApp: App {
                 appState: appState,
                 onSettings: { openSettings() },
                 onShowHistory: openHistory,
+                onShowAbout: { openSettings(section: .about) },
                 onToggleRecording: {
                     DiagnosticLogger.shared.log("Menu 'Start/Stop Recording' clicked, transcriptionCoordinator is nil: \(transcriptionCoordinator == nil)")
                     transcriptionCoordinator?.toggleRecordingSync()
@@ -144,12 +145,22 @@ struct VoiceTypeMenuView: View {
     var appState: AppState
     var onSettings: () -> Void
     var onShowHistory: () -> Void
+    var onShowAbout: () -> Void
     var onToggleRecording: () -> Void
 
     @State private var recordingRowHovering = false
     @State private var historyRowHovering = false
     @State private var settingsRowHovering = false
     @State private var quitRowHovering = false
+    @State private var versionRowHovering = false
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+
+    private var appBuild: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+    }
 
     private var recordingHotkeyHint: String {
         if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording) {
@@ -244,6 +255,24 @@ struct VoiceTypeMenuView: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
+
+            // Version button
+            Button(action: onShowAbout) {
+                HStack {
+                    Text("Version \(appVersion) (\(appBuild))")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .background(versionRowHovering ? Color.gray.opacity(0.15) : Color.clear)
+            .onHover { hovering in
+                versionRowHovering = hovering
+            }
 
             Divider()
 
