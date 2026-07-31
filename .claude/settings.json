@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v jq >/dev/null 2>&1 || { echo \"HOOK ERROR: jq not found - failing closed (Agent call blocked).\" >&2; exit 2; }; input=$(cat); model=$(printf '%s' \"$input\" | jq -r '.tool_input.model // \"\"' 2>/dev/null) || { echo \"HOOK ERROR: could not parse tool_input - failing closed.\" >&2; exit 2; }; subtype=$(printf '%s' \"$input\" | jq -r '.tool_input.subagent_type // \"\"' 2>/dev/null); if [ \"$model\" = \"opus\" ] && [ \"$subtype\" != \"opus-consultant\" ]; then echo \"BLOCKED: model=opus requested for subagent_type='$subtype'. In voice-type, Opus is reserved for the 'opus-consultant' agent (review/architecture consultation only). Use subagent_type='opus-consultant' for that, or drop the explicit model override and dispatch 'haiku-researcher'/'haiku-executor' for research/implementation.\" >&2; exit 2; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v jq >/dev/null 2>&1 || { echo \"HOOK ERROR: jq not found - failing closed (edit blocked).\" >&2; exit 2; }; input=$(cat); path=$(printf '%s' \"$input\" | jq -r '.tool_input.file_path // \"\"' 2>/dev/null) || { echo \"HOOK ERROR: could not parse tool_input - failing closed.\" >&2; exit 2; }; marker=\"$PWD/.claude/.allow-direct-edit\"; if [ -f \"$marker\" ]; then mv \"$marker\" \"$marker.used\"; exit 0; fi; path_lower=$(printf '%s' \"$path\" | tr 'A-Z' 'a-z'); case \"$path_lower\" in *.swift) case \"$path_lower\" in */.worktrees/*) ;; *) echo \"BLOCKED: direct Sonnet edit to '$path' outside a .worktrees/ worktree. Per voice-type workflow, Sonnet does not implement directly - dispatch 'haiku-executor' (Agent tool) to make this change in a worktree instead. One-shot override: after telling the user and letting them object, create .claude/.allow-direct-edit\" >&2; exit 2 ;; esac ;; esac"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v jq >/dev/null 2>&1 || { echo \"HOOK ERROR: jq not found - failing closed (Bash call blocked).\" >&2; exit 2; }; input=$(cat); cmd=$(printf '%s' \"$input\" | jq -r '.tool_input.command // \"\"' 2>/dev/null) || { echo \"HOOK ERROR: could not parse tool_input - failing closed.\" >&2; exit 2; }; marker=\"$PWD/.claude/.allow-direct-edit\"; if [ -f \"$marker\" ]; then mv \"$marker\" \"$marker.used\"; exit 0; fi; cmd_lower=$(printf '%s' \"$cmd\" | tr 'A-Z' 'a-z'); if printf '%s' \"$cmd_lower\" | grep -qE \"(>>?[[:space:]]*[^|]*\\.swift|sed[[:space:]]+-i[^|]*\\.swift|tee[[:space:]]+[^|]*\\.swift|\\bmv\\b[^|]*\\.swift|\\bcp\\b[^|]*\\.swift|\\binstall\\b[^|]*\\.swift)\" && ! printf '%s' \"$cmd_lower\" | grep -q \"\\.worktrees\"; then echo \"BLOCKED: Bash command appears to write/rename a .swift file outside .worktrees/ (best-effort pattern match - not airtight, e.g. python/dd/base64 writes are not caught). Dispatch 'haiku-executor' instead, or work inside a .worktrees/ path. One-shot override: create .claude/.allow-direct-edit after telling the user.\" >&2; exit 2; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
