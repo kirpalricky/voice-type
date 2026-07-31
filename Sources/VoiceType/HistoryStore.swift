@@ -12,13 +12,17 @@ struct HistoryEntry: Codable, Identifiable {
     /// Filename (not full path) inside the entry's folder, if the audio was saved successfully.
     /// New entries use "audio.m4a" (AAC compressed); legacy entries may use "audio.caf" (PCM uncompressed).
     let audioFileName: String?
+    /// The on-disk URL of the folder containing this entry's files (transcripts, audio, metadata).
+    /// This is the authoritative location; the folder may be named anything (not necessarily a UUID).
+    let folderURL: URL
 
-    init(id: UUID = UUID(), timestamp: Date = Date(), rawTranscript: String, polishedTranscript: String, audioFileName: String?) {
+    init(id: UUID = UUID(), timestamp: Date = Date(), rawTranscript: String, polishedTranscript: String, audioFileName: String?, folderURL: URL) {
         self.id = id
         self.timestamp = timestamp
         self.rawTranscript = rawTranscript
         self.polishedTranscript = polishedTranscript
         self.audioFileName = audioFileName
+        self.folderURL = folderURL
     }
 }
 
@@ -72,13 +76,6 @@ final class HistoryStore {
                     continue
                 }
 
-                // Use folder name as authoritative entry ID; skip if not a valid UUID
-                let folderName = item.lastPathComponent
-                guard let folderId = UUID(uuidString: folderName) else {
-                    os_log("Skipping non-UUID folder: %@", log: logger, type: .debug, folderName)
-                    continue
-                }
-
                 let metadataURL = item.appendingPathComponent("metadata.json")
                 let rawTranscriptURL = item.appendingPathComponent("raw.txt")
                 let polishedTranscriptURL = item.appendingPathComponent("polished.txt")
@@ -103,16 +100,18 @@ final class HistoryStore {
                         audioFileName = nil
                     }
 
-                    // Use folder's UUID, not metadata.id, as the authoritative entry ID
+                    // Use metadata.id as the authoritative entry ID (not the folder name)
                     let entry = HistoryEntry(
-                        id: folderId,
+                        id: metadata.id,
                         timestamp: metadata.timestamp,
                         rawTranscript: rawTranscript,
                         polishedTranscript: polishedTranscript,
-                        audioFileName: audioFileName
+                        audioFileName: audioFileName,
+                        folderURL: item
                     )
                     loadedEntries.append(entry)
                 } catch {
+                    let folderName = item.lastPathComponent
                     os_log("Failed to load entry from %@: %@", log: logger, type: .debug, folderName, error.localizedDescription)
                     // Skip this folder and continue
                 }
@@ -176,7 +175,8 @@ final class HistoryStore {
             timestamp: now,
             rawTranscript: rawTranscript,
             polishedTranscript: polishedTranscript,
-            audioFileName: audioFileName
+            audioFileName: audioFileName,
+            folderURL: entryFolder
         )
         entries.insert(entry, at: 0)
 
@@ -197,13 +197,12 @@ final class HistoryStore {
 
     func audioURL(for entry: HistoryEntry) -> URL? {
         guard let audioFileName = entry.audioFileName else { return nil }
-        let url = recordingsDir.appendingPathComponent(entry.id.uuidString).appendingPathComponent(audioFileName)
+        let url = entry.folderURL.appendingPathComponent(audioFileName)
         return fileManager.fileExists(atPath: url.path) ? url : nil
     }
 
     private func deleteFolder(for entry: HistoryEntry) {
-        let folderURL = recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
-        try? fileManager.removeItem(at: folderURL)
+        try? fileManager.removeItem(at: entry.folderURL)
     }
 
     private static func writeAudio(samples: [Float], sampleRate: Double, to url: URL) throws {

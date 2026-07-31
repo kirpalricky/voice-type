@@ -450,10 +450,12 @@ struct HistoryStoreTests {
         defer { try? FileManager.default.removeItem(at: tempDirLocal) }
 
         let store = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        let folderURL = store.recordingsDir.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let entry = HistoryEntry(
             rawTranscript: "test",
             polishedTranscript: "Test",
-            audioFileName: nil
+            audioFileName: nil,
+            folderURL: folderURL
         )
         let url = store.audioURL(for: entry)
         #expect(url == nil)
@@ -466,11 +468,13 @@ struct HistoryStoreTests {
         defer { try? FileManager.default.removeItem(at: tempDirLocal) }
 
         let store = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        let folderURL = store.recordingsDir.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let entry = HistoryEntry(
             id: UUID(),
             rawTranscript: "test",
             polishedTranscript: "Test",
-            audioFileName: "audio.caf"
+            audioFileName: "audio.caf",
+            folderURL: folderURL
         )
         let url = store.audioURL(for: entry)
         #expect(url == nil)
@@ -572,7 +576,7 @@ struct HistoryStoreTests {
     }
 
     @Test
-    func load_RenamedFolder_UsesActualFolderName() {
+    func load_RenamedFolder_PreservesMetadataIdUsesNewFolderURL() {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -584,6 +588,7 @@ struct HistoryStoreTests {
             audioSamples: Self.createSampleAudio(),
             sampleRate: 48000
         )
+        let originalId = originalEntry.id
 
         // Simulate user renaming folder in Finder: rename it to a different UUID
         let recordingsDir = store1.recordingsDir
@@ -593,10 +598,11 @@ struct HistoryStoreTests {
 
         try? FileManager.default.moveItem(at: originalFolder, to: renamedFolder)
 
-        // Now load and verify the entry ID comes from the folder name, not metadata.id
+        // Now load and verify the entry ID comes from metadata.id, not the new folder name
         let store2 = HistoryStore(baseDirectoryOverride: tempDir)
         #expect(store2.entries.count == 1)
-        #expect(store2.entries[0].id == newFolderId, "Loaded entry ID should match folder name, not metadata.id")
+        #expect(store2.entries[0].id == originalId, "Loaded entry ID should match original metadata.id, not new folder name")
+        #expect(store2.entries[0].folderURL.lastPathComponent == renamedFolder.lastPathComponent, "folderURL should point to the renamed folder location")
         #expect(store2.entries[0].rawTranscript == "rename test", "Transcript should be preserved")
     }
 
