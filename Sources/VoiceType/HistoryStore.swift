@@ -75,6 +75,9 @@ private struct RecordingMetadata: Codable {
 /// Envelope structure for the on-disk index cache, including both the cached entries
 /// and the set of folder names that were observed on disk during the scan that created this index.
 struct HistoryIndex: Codable {
+    static let currentVersion = 1
+
+    let version: Int
     let folderNames: [String]
     let entries: [HistoryEntry]
 }
@@ -121,6 +124,13 @@ final class HistoryStore {
                 let indexData = try Data(contentsOf: indexURL)
                 let decoder = JSONDecoder()
                 let cachedIndex = try decoder.decode(HistoryIndex.self, from: indexData)
+
+                // Check if index version matches current version
+                guard cachedIndex.version == HistoryIndex.currentVersion else {
+                    // Version mismatch, fall through to fallback
+                    kickOffAsyncScan()
+                    return
+                }
 
                 // Do shallow listing to check if folders match
                 guard fileManager.fileExists(atPath: recordingsDir.path) else {
@@ -185,8 +195,13 @@ final class HistoryStore {
                     let decoder = JSONDecoder()
                     let cachedIndex = try decoder.decode(HistoryIndex.self, from: indexData)
 
-                    // Verify folder names match (fast path validation)
-                    if FileManager.default.fileExists(atPath: recordingsDir.path) {
+                    // Check if index version matches current version
+                    if cachedIndex.version != HistoryIndex.currentVersion {
+                        // Version mismatch, fall through to full scan
+                        let logger = OSLog(subsystem: "com.voicetype.history", category: "HistoryStore")
+                        os_log("Index version mismatch, forcing full scan", log: logger, type: .debug)
+                    } else if FileManager.default.fileExists(atPath: recordingsDir.path) {
+                        // Verify folder names match (fast path validation)
                         let contents = try FileManager.default.contentsOfDirectory(at: recordingsDir, includingPropertiesForKeys: nil)
                         var actualFolderNames: Set<String> = []
                         for item in contents {
@@ -269,24 +284,44 @@ final class HistoryStore {
                     continue
                 }
 
-                let folderName = item.lastPathComponent
-                observedFolderNames.append(folderName)
+                var folderURL = item
+                var folderName = item.lastPathComponent
 
-                let metadataURL = item.appendingPathComponent("metadata.json")
-                let rawTranscriptURL = item.appendingPathComponent("raw.txt")
-                let polishedTranscriptURL = item.appendingPathComponent("polished.txt")
+                let metadataURL = folderURL.appendingPathComponent("metadata.json")
 
                 do {
                     let metadataData = try Data(contentsOf: metadataURL)
                     let decoder = JSONDecoder()
                     let metadata = try decoder.decode(RecordingMetadata.self, from: metadataData)
 
+                    // Best-effort, idempotent migration: legacy folders were named exactly after their
+                    // entry's UUID. Rename to a sortable "<yyyyMMdd-HHmmss>-<uuid>" form so Finder lists
+                    // history chronologically. Skip on any error — this is cosmetic, not required for correctness.
+                    if folderName == metadata.id.uuidString {
+                        let sortableName = Self.sortableFolderName(timestamp: metadata.timestamp, id: metadata.id)
+                        if sortableName != folderName {
+                            let renamedURL = recordingsDir.appendingPathComponent(sortableName, isDirectory: true)
+                            if !fileManager.fileExists(atPath: renamedURL.path) {
+                                do {
+                                    try fileManager.moveItem(at: folderURL, to: renamedURL)
+                                    folderURL = renamedURL
+                                    folderName = sortableName
+                                } catch {
+                                    os_log("Failed to migrate legacy folder name %@: %@", log: logger, type: .debug, folderName, error.localizedDescription)
+                                }
+                            }
+                        }
+                    }
+
+                    let rawTranscriptURL = folderURL.appendingPathComponent("raw.txt")
+                    let polishedTranscriptURL = folderURL.appendingPathComponent("polished.txt")
+
                     let rawTranscript = try String(contentsOf: rawTranscriptURL, encoding: .utf8)
                     let polishedTranscript = try String(contentsOf: polishedTranscriptURL, encoding: .utf8)
 
                     // Check for m4a first (new format), then fall back to caf (legacy format)
-                    let m4aURL = item.appendingPathComponent("audio.m4a")
-                    let cafURL = item.appendingPathComponent("audio.caf")
+                    let m4aURL = folderURL.appendingPathComponent("audio.m4a")
+                    let cafURL = folderURL.appendingPathComponent("audio.caf")
                     let audioFileName: String?
                     if fileManager.fileExists(atPath: m4aURL.path) {
                         audioFileName = "audio.m4a"
@@ -303,13 +338,15 @@ final class HistoryStore {
                         rawTranscript: rawTranscript,
                         polishedTranscript: polishedTranscript,
                         audioFileName: audioFileName,
-                        folderURL: item
+                        folderURL: folderURL
                     )
                     loadedEntries.append(entry)
                 } catch {
                     os_log("Failed to load entry from %@: %@", log: logger, type: .debug, folderName, error.localizedDescription)
                     // Skip this folder and continue (but keep the folder name recorded)
                 }
+
+                observedFolderNames.append(folderName)
             }
 
             // Sort by timestamp descending, with UUID string as tie-breaker for consistent ordering
@@ -334,7 +371,7 @@ final class HistoryStore {
         let now = Date()
         var audioFileName: String?
 
-        let entryFolder = recordingsDir.appendingPathComponent(id.uuidString, isDirectory: true)
+        let entryFolder = recordingsDir.appendingPathComponent(Self.sortableFolderName(timestamp: now, id: id), isDirectory: true)
         var didPersist = false
 
         do {
@@ -449,7 +486,7 @@ final class HistoryStore {
                 folderNames = names
             }
 
-            let index = HistoryIndex(folderNames: folderNames, entries: entries)
+            let index = HistoryIndex(version: HistoryIndex.currentVersion, folderNames: folderNames, entries: entries)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let indexData = try encoder.encode(index)
@@ -457,6 +494,15 @@ final class HistoryStore {
         } catch {
             os_log("Failed to write index cache: %@", log: logger, type: .error, error.localizedDescription)
         }
+    }
+
+    nonisolated private static func sortableFolderName(timestamp: Date, id: UUID) -> String {
+        let calendar = Calendar(identifier: .gregorian)
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: timestamp)
+        let datePart = String(format: "%04d%02d%02d-%02d%02d%02d",
+                               components.year ?? 0, components.month ?? 0, components.day ?? 0,
+                               components.hour ?? 0, components.minute ?? 0, components.second ?? 0)
+        return "\(datePart)-\(id.uuidString)"
     }
 
     private static func writeAudio(samples: [Float], sampleRate: Double, to url: URL) throws {

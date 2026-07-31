@@ -80,7 +80,7 @@ struct HistoryStoreTests {
             sampleRate: 48000
         )
 
-        let entryFolder = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        let entryFolder = entry.folderURL
 
         // Check that folder exists
         #expect(FileManager.default.fileExists(atPath: entryFolder.path))
@@ -120,7 +120,7 @@ struct HistoryStoreTests {
         #expect(entry.audioFileName == "audio.m4a")
 
         // Verify file exists in the per-folder structure
-        let audioURL = store.recordingsDir.appendingPathComponent(entry.id.uuidString).appendingPathComponent("audio.m4a")
+        let audioURL = entry.folderURL.appendingPathComponent("audio.m4a")
         #expect(FileManager.default.fileExists(atPath: audioURL.path))
     }
 
@@ -138,7 +138,7 @@ struct HistoryStoreTests {
 
         #expect(entry.audioFileName == nil)
 
-        let entryFolder = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        let entryFolder = entry.folderURL
         let audioURL = entryFolder.appendingPathComponent("audio.m4a")
         #expect(!FileManager.default.fileExists(atPath: audioURL.path))
 
@@ -201,7 +201,7 @@ struct HistoryStoreTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
 
-        var prunedEntryId: UUID?
+        var prunedEntryFolder: URL?
 
         for i in 0...100 {
             let entry = store.addEntry(
@@ -211,14 +211,13 @@ struct HistoryStoreTests {
                 sampleRate: 48000
             )
             if i == 0 {
-                prunedEntryId = entry.id
+                prunedEntryFolder = entry.folderURL
             }
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
 
         // The folder of the first (pruned) entry should be deleted
-        if let entryId = prunedEntryId {
-            let folderURL = store.recordingsDir.appendingPathComponent(entryId.uuidString, isDirectory: true)
+        if let folderURL = prunedEntryFolder {
             #expect(!FileManager.default.fileExists(atPath: folderURL.path))
         }
     }
@@ -229,7 +228,7 @@ struct HistoryStoreTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
 
-        var savedEntryIds: Set<UUID> = []
+        var savedFolderURLs: [URL] = []
 
         for i in 0...100 {
             let entry = store.addEntry(
@@ -240,16 +239,15 @@ struct HistoryStoreTests {
             )
             if i > 0 {
                 // Keep all entries except the first (which gets pruned when count > 100)
-                savedEntryIds.insert(entry.id)
+                savedFolderURLs.append(entry.folderURL)
             }
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
 
         // All remaining entries' folders should exist (100 entries after pruning)
-        for entryId in savedEntryIds {
-            let folderURL = store.recordingsDir.appendingPathComponent(entryId.uuidString, isDirectory: true)
+        for folderURL in savedFolderURLs {
             #expect(FileManager.default.fileExists(atPath: folderURL.path),
-                   "Entry folder should exist: \(entryId.uuidString)")
+                   "Entry folder should exist: \(folderURL.path)")
         }
     }
 
@@ -260,7 +258,7 @@ struct HistoryStoreTests {
 
         // Build up 5 entries under a generous cap.
         let store1 = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
-        var ids: [UUID] = []
+        var folderURLs: [URL] = []
         for i in 0..<5 {
             let entry = store1.addEntry(
                 rawTranscript: "entry \(i)",
@@ -268,7 +266,7 @@ struct HistoryStoreTests {
                 audioSamples: Self.createSampleAudio(),
                 sampleRate: 48000
             )
-            ids.append(entry.id)
+            folderURLs.append(entry.folderURL)
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
         #expect(store1.entries.count == 5)
@@ -278,13 +276,11 @@ struct HistoryStoreTests {
         #expect(store2.entries.count == 3)
 
         // The two oldest entries' folders should have been deleted by the load-time prune.
-        for oldestId in ids.prefix(2) {
-            let folderURL = store2.recordingsDir.appendingPathComponent(oldestId.uuidString, isDirectory: true)
+        for folderURL in folderURLs.prefix(2) {
             #expect(!FileManager.default.fileExists(atPath: folderURL.path))
         }
         // The 3 newest should remain.
-        for keptId in ids.suffix(3) {
-            let folderURL = store2.recordingsDir.appendingPathComponent(keptId.uuidString, isDirectory: true)
+        for folderURL in folderURLs.suffix(3) {
             #expect(FileManager.default.fileExists(atPath: folderURL.path))
         }
 
@@ -340,7 +336,7 @@ struct HistoryStoreTests {
         // Build up 5 entries under a generous cap, then force the async-scan path
         // (not the index-cache fast path) by deleting index.json.
         let store1 = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
-        var ids: [UUID] = []
+        var folderURLs: [URL] = []
         for i in 0..<5 {
             let entry = store1.addEntry(
                 rawTranscript: "entry \(i)",
@@ -348,7 +344,7 @@ struct HistoryStoreTests {
                 audioSamples: Self.createSampleAudio(),
                 sampleRate: 48000
             )
-            ids.append(entry.id)
+            folderURLs.append(entry.folderURL)
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
         try? FileManager.default.removeItem(at: store1.indexURL)
@@ -359,12 +355,10 @@ struct HistoryStoreTests {
 
         #expect(store2.entries.count == 3)
 
-        for oldestId in ids.prefix(2) {
-            let folderURL = store2.recordingsDir.appendingPathComponent(oldestId.uuidString, isDirectory: true)
+        for folderURL in folderURLs.prefix(2) {
             #expect(!FileManager.default.fileExists(atPath: folderURL.path))
         }
-        for keptId in ids.suffix(3) {
-            let folderURL = store2.recordingsDir.appendingPathComponent(keptId.uuidString, isDirectory: true)
+        for folderURL in folderURLs.suffix(3) {
             #expect(FileManager.default.fileExists(atPath: folderURL.path))
         }
 
@@ -407,7 +401,7 @@ struct HistoryStoreTests {
             sampleRate: 48000
         )
 
-        let folderURL = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        let folderURL = entry.folderURL
         #expect(FileManager.default.fileExists(atPath: folderURL.path))
 
         store.delete(entry)
@@ -699,7 +693,7 @@ struct HistoryStoreTests {
         #expect(store2.entries[0].audioFileName == nil)
 
         // Verify folder exists with text files but no audio
-        let entryFolder = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        let entryFolder = entry.folderURL
         #expect(FileManager.default.fileExists(atPath: entryFolder.path))
 
         let rawURL = entryFolder.appendingPathComponent("raw.txt")
@@ -730,7 +724,7 @@ struct HistoryStoreTests {
 
         // Simulate user renaming folder in Finder: rename it to a different UUID
         let recordingsDir = store1.recordingsDir
-        let originalFolder = recordingsDir.appendingPathComponent(originalEntry.id.uuidString, isDirectory: true)
+        let originalFolder = originalEntry.folderURL
         let newFolderId = UUID()
         let renamedFolder = recordingsDir.appendingPathComponent(newFolderId.uuidString, isDirectory: true)
 
@@ -751,7 +745,7 @@ struct HistoryStoreTests {
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
 
-        var entryIds: Set<UUID> = []
+        var folderURLs: [URL] = []
 
         // Add exactly 100 entries (which is maxEntries)
         for i in 0..<100 {
@@ -761,7 +755,7 @@ struct HistoryStoreTests {
                 audioSamples: Self.createSampleAudio(),
                 sampleRate: 48000
             )
-            entryIds.insert(entry.id)
+            folderURLs.append(entry.folderURL)
             if i < 99 {
                 try? await Task.sleep(nanoseconds: 1_000_000)
             }
@@ -771,8 +765,7 @@ struct HistoryStoreTests {
         #expect(store.entries.count == 100)
 
         // All folders should exist
-        for entryId in entryIds {
-            let folderURL = store.recordingsDir.appendingPathComponent(entryId.uuidString, isDirectory: true)
+        for folderURL in folderURLs {
             #expect(FileManager.default.fileExists(atPath: folderURL.path),
                    "All 100 entry folders should exist")
         }
@@ -1170,5 +1163,185 @@ struct HistoryStoreTests {
         // Note: no await, should load synchronously from cache
         #expect(store3.entries.count == 1, "Second load should use cache synchronously")
         #expect(store3.entries[0].id == validEntry.id, "Cached entry should be present")
+    }
+
+    // MARK: - Stage 6 Migration Tests
+
+    @Test
+    func load_LegacyBareUUIDFolder_IsMigratedToSortableName() async throws {
+        let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirLocal) }
+
+        // Create a legacy entry folder manually (named exactly after its UUID)
+        let legacyId = UUID()
+        let testTimestamp = Date(timeIntervalSince1970: 1234567890) // 2009-02-13 23:31:30
+        let recordingsDir = tempDirLocal.appendingPathComponent("Recordings", isDirectory: true)
+        let legacyFolder = recordingsDir.appendingPathComponent(legacyId.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyFolder, withIntermediateDirectories: true)
+
+        // Create metadata.json with the legacy ID and a known timestamp
+        let metadata: [String: Any] = [
+            "id": legacyId.uuidString,
+            "timestamp": testTimestamp.timeIntervalSinceReferenceDate
+        ]
+        let metadataData = try JSONSerialization.data(withJSONObject: metadata)
+        let metadataURL = legacyFolder.appendingPathComponent("metadata.json")
+        try metadataData.write(to: metadataURL)
+
+        // Create transcript files
+        let rawURL = legacyFolder.appendingPathComponent("raw.txt")
+        try "legacy raw".write(to: rawURL, atomically: true, encoding: .utf8)
+        let polishedURL = legacyFolder.appendingPathComponent("polished.txt")
+        try "Legacy Polished".write(to: polishedURL, atomically: true, encoding: .utf8)
+
+        // Load the store (forces async scan since there's no index.json)
+        let store = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        await store.waitForPendingLoad()
+
+        // Verify the legacy folder was migrated
+        #expect(store.entries.count == 1)
+        let loadedEntry = store.entries[0]
+        #expect(loadedEntry.id == legacyId)
+
+        // Verify the folder was renamed (no longer bare UUID)
+        let folderName = loadedEntry.folderURL.lastPathComponent
+        #expect(folderName != legacyId.uuidString, "Folder should be renamed from bare UUID")
+
+        // Verify folder name matches the sortable format (yyyyMMdd-HHmmss-uuid)
+        // Check it ends with the UUID and has a dash at position 15
+        #expect(folderName.hasSuffix(legacyId.uuidString), "Folder name should end with UUID")
+        #expect(folderName.count > 36, "Folder name should have date prefix before UUID")
+
+        // Verify the old bare-UUID folder no longer exists
+        #expect(!FileManager.default.fileExists(atPath: legacyFolder.path))
+
+        // Verify the new folder exists and still contains the files
+        #expect(FileManager.default.fileExists(atPath: loadedEntry.folderURL.path))
+        #expect(FileManager.default.fileExists(atPath: loadedEntry.folderURL.appendingPathComponent("raw.txt").path))
+        #expect(FileManager.default.fileExists(atPath: loadedEntry.folderURL.appendingPathComponent("polished.txt").path))
+
+        // Verify the content is preserved
+        #expect(loadedEntry.rawTranscript == "legacy raw")
+        #expect(loadedEntry.polishedTranscript == "Legacy Polished")
+    }
+
+    @Test
+    func addEntry_CreatesSortableFolderName() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+
+        let entry = store.addEntry(
+            rawTranscript: "test sortable",
+            polishedTranscript: "Test Sortable",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        let folderName = entry.folderURL.lastPathComponent
+
+        // Verify folder name is NOT the bare UUID
+        #expect(folderName != entry.id.uuidString, "New entries should not use bare UUID as folder name")
+
+        // Verify folder name ends with the entry's UUID
+        #expect(folderName.hasSuffix(entry.id.uuidString), "Folder name should end with entry UUID")
+
+        // Verify folder name has the sortable format: starts with yyyyMMdd-HHmmss-
+        // Total length should be 8 (date) + 1 (dash) + 6 (time) + 1 (dash) + 36 (UUID) = 52
+        #expect(folderName.count == 52, "Folder name should be exactly 52 characters (yyyyMMdd-HHmmss-<uuid>)")
+
+        // Verify first 15 characters match expected format (positions 0-7 = date, 8 = dash, 9-14 = time)
+        let prefix = String(folderName.prefix(15))
+        #expect(prefix.count == 15, "Date-time prefix should be 15 characters")
+
+        // Basic validation: first 8 chars should be digits (date)
+        let dateStr = String(prefix.prefix(8))
+        #expect(Int(dateStr) != nil, "First 8 characters should be numeric date")
+
+        // Character at index 8 should be a dash
+        #expect(prefix[prefix.index(prefix.startIndex, offsetBy: 8)] == "-", "Character at position 8 should be dash")
+
+        // Characters 9-14 should be numeric (time)
+        let timeStr = String(prefix.dropFirst(9))
+        #expect(Int(timeStr) != nil, "Time portion should be numeric")
+    }
+
+    @Test
+    func load_PreStage6Index_ForcesRescanAndMigratesLegacyFolder() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create a legacy entry folder manually (named exactly after its UUID)
+        let legacyId = UUID()
+        let testTimestamp = Date(timeIntervalSince1970: 1234567890) // 2009-02-13 23:31:30
+        let recordingsDir = tempDir.appendingPathComponent("Recordings", isDirectory: true)
+        let legacyFolder = recordingsDir.appendingPathComponent(legacyId.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyFolder, withIntermediateDirectories: true)
+
+        // Create metadata.json with the legacy ID and a known timestamp
+        let metadata: [String: Any] = [
+            "id": legacyId.uuidString,
+            "timestamp": testTimestamp.timeIntervalSinceReferenceDate
+        ]
+        let metadataData = try JSONSerialization.data(withJSONObject: metadata)
+        let metadataURL = legacyFolder.appendingPathComponent("metadata.json")
+        try metadataData.write(to: metadataURL)
+
+        // Create transcript files
+        let rawURL = legacyFolder.appendingPathComponent("raw.txt")
+        try "legacy raw".write(to: rawURL, atomically: true, encoding: .utf8)
+        let polishedURL = legacyFolder.appendingPathComponent("polished.txt")
+        try "Legacy Polished".write(to: polishedURL, atomically: true, encoding: .utf8)
+
+        // Manually create a pre-Stage-6 index.json (without version field)
+        let preStage6Index: [String: Any] = [
+            "folderNames": [legacyId.uuidString],
+            "entries": []
+        ]
+        let indexData = try JSONSerialization.data(withJSONObject: preStage6Index)
+        let indexURL = tempDir.appendingPathComponent("index.json")
+        try indexData.write(to: indexURL, options: .atomic)
+
+        // Load the store (should detect version mismatch and fall back to async scan)
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        await store.waitForPendingLoad()
+
+        // Verify the legacy folder was migrated
+        #expect(store.entries.count == 1)
+        let loadedEntry = store.entries[0]
+        #expect(loadedEntry.id == legacyId)
+
+        // Verify the folder was renamed (no longer bare UUID)
+        let folderName = loadedEntry.folderURL.lastPathComponent
+        #expect(folderName != legacyId.uuidString, "Folder should be renamed from bare UUID")
+
+        // Verify folder name matches the sortable format (yyyyMMdd-HHmmss-uuid)
+        #expect(folderName.hasSuffix(legacyId.uuidString), "Folder name should end with UUID")
+        #expect(folderName.count == 52, "Folder name should be exactly 52 characters (yyyyMMdd-HHmmss-<uuid>)")
+
+        // Verify the old bare-UUID folder no longer exists
+        #expect(!FileManager.default.fileExists(atPath: legacyFolder.path))
+
+        // Verify the new folder exists and still contains the files
+        #expect(FileManager.default.fileExists(atPath: loadedEntry.folderURL.path))
+        #expect(FileManager.default.fileExists(atPath: loadedEntry.folderURL.appendingPathComponent("raw.txt").path))
+        #expect(FileManager.default.fileExists(atPath: loadedEntry.folderURL.appendingPathComponent("polished.txt").path))
+
+        // Verify the content is preserved
+        #expect(loadedEntry.rawTranscript == "legacy raw")
+        #expect(loadedEntry.polishedTranscript == "Legacy Polished")
+
+        // Verify a fresh index.json was written with the version field
+        let updatedIndexData = try Data(contentsOf: indexURL)
+        let decoder = JSONDecoder()
+        let updatedIndex = try decoder.decode(HistoryIndex.self, from: updatedIndexData)
+        #expect(updatedIndex.version == HistoryIndex.currentVersion)
+        #expect(updatedIndex.entries.count == 1)
+
+        // Also verify using raw JSON that version key exists (to prove we're not just tautologically re-decoding)
+        if let jsonObj = try JSONSerialization.jsonObject(with: updatedIndexData) as? [String: Any] {
+            #expect((jsonObj["version"] as? Int) != nil, "index.json should contain version key")
+        }
     }
 }
