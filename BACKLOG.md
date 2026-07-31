@@ -2,14 +2,7 @@
 
 ## Open (stack ranked)
 
-1. **History storage scale-up, Stage 6 (optional/deferred) — Cosmetic
-   sortable folder names.** Rename UUID folders to
-   `<yyyyMMdd-HHmmss>-<uuid>` for Finder chronological sort. Depends on
-   Stage 2 landing first (folder name must stop being the authoritative
-   ID before it's safe to change). Best-effort, idempotent migration on
-   load; skip any folder that errors.
-
-2. **Reprocess history entries from raw audio.** `HistoryStore`
+1. **Reprocess history entries from raw audio.** `HistoryStore`
   ([HistoryStore.swift](Sources/VoiceType/HistoryStore.swift)) already
   saves the source audio per entry (`audioFileName`, `audioURL(for:)`),
   but there's no way to re-run transcription/polishing on it after the
@@ -28,6 +21,34 @@
     pipeline (currently under active iteration) settles down.
 
 ## Done
+
+- History storage scale-up, Stage 6 — Sortable folder names. New entries'
+  folders are named `<yyyyMMdd-HHmmss>-<uuid>` (via a thread-safe
+  `sortableFolderName` helper using `Calendar(identifier: .gregorian)`,
+  not `DateFormatter`, since `addEntry` on the main actor and the
+  detached scan task can call it concurrently; pinned to Gregorian
+  specifically so a non-Gregorian system calendar can't produce
+  non-chronological or era-resetting names) so Finder lists history
+  chronologically. Legacy bare-UUID folders are migrated during a full
+  directory scan, best-effort and idempotently — only when a folder's
+  name exactly equals its own entry's UUID (the old default-naming
+  pattern), so a user-renamed folder or an already-migrated one is left
+  alone; a failed rename just leaves the folder as-is and the entry
+  still loads from its original location. Added a `version` field to
+  the on-disk `index.json` cache so already-valid Stage 4/5 caches
+  (which every existing user already has) get invalidated exactly once,
+  forcing the one full scan that performs the migration — without this,
+  the fast cache-hit path in `load()` would never call the scan/migration
+  code at all and Stage 6 would ship as a no-op for its target users.
+  122 tests pass.
+
+  **Known limitation (not fixed, low severity):** if a migrated folder's
+  target name happens to already exist on disk (same entry timestamp to
+  the second, extremely rare outside a restored backup), the rename is
+  skipped and the legacy folder still loads — producing two in-memory
+  entries sharing the same `metadata.id`, which SwiftUI `ForEach` and
+  `delete(_:)` don't dedupe against. Deferred as pre-existing-class,
+  organically triggerable only via backup restore.
 
 - History storage scale-up, Stage 5 — Raise `maxEntries` to 5000. Single
   count-based cap for both transcripts and audio (user explicitly deferred
