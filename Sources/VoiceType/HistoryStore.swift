@@ -15,11 +15,13 @@ struct HistoryEntry: Codable, Identifiable {
     /// The on-disk URL of the folder containing this entry's files (transcripts, audio, metadata).
     /// This is the authoritative location; the folder may be named anything (not necessarily a UUID).
     let folderURL: URL
-    /// Cached at construction time so `HistoryRow` doesn't need to call `FileManager.fileExists` on every render.
-    let hasAudio: Bool
     /// Lowercased `rawTranscript + polishedTranscript`, precomputed once so search filtering doesn't
     /// re-run ICU case folding on the full transcript text on every keystroke.
     let searchHaystack: String
+
+    /// Cheap nil-check, not persisted — kept as a computed property (not stored) so a future
+    /// `Codable` index cache (BACKLOG Stage 4) can't decode a stale value independent of `audioFileName`.
+    var hasAudio: Bool { audioFileName != nil }
 
     init(id: UUID = UUID(), timestamp: Date = Date(), rawTranscript: String, polishedTranscript: String, audioFileName: String?, folderURL: URL) {
         self.id = id
@@ -28,7 +30,6 @@ struct HistoryEntry: Codable, Identifiable {
         self.polishedTranscript = polishedTranscript
         self.audioFileName = audioFileName
         self.folderURL = folderURL
-        self.hasAudio = audioFileName != nil
         self.searchHaystack = (rawTranscript + " " + polishedTranscript).lowercased()
     }
 }
