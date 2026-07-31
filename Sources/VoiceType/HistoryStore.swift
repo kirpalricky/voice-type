@@ -9,7 +9,8 @@ struct HistoryEntry: Codable, Identifiable {
     let timestamp: Date
     let rawTranscript: String
     let polishedTranscript: String
-    /// Filename (not full path) inside `HistoryStore.recordingsDir`, if the audio was saved successfully.
+    /// Filename (not full path) inside the entry's folder, if the audio was saved successfully.
+    /// For the new per-folder layout, this is always "audio.caf" if present, or nil.
     let audioFileName: String?
 
     init(id: UUID = UUID(), timestamp: Date = Date(), rawTranscript: String, polishedTranscript: String, audioFileName: String?) {
@@ -19,6 +20,12 @@ struct HistoryEntry: Codable, Identifiable {
         self.polishedTranscript = polishedTranscript
         self.audioFileName = audioFileName
     }
+}
+
+/// Minimal metadata stored alongside transcript files in each recording folder.
+private struct RecordingMetadata: Codable {
+    let id: UUID
+    let timestamp: Date
 }
 
 /// Persists a rolling history of transcriptions and their source audio to
@@ -45,59 +52,119 @@ final class HistoryStore {
         baseDir.appendingPathComponent("Recordings", isDirectory: true)
     }
 
-    private var historyURL: URL {
-        baseDir.appendingPathComponent("history.json")
-    }
-
     init(baseDirectoryOverride: URL? = nil) {
         self.baseDirectoryOverride = baseDirectoryOverride
         load()
     }
 
     func load() {
-        guard fileManager.fileExists(atPath: historyURL.path) else { return }
+        guard fileManager.fileExists(atPath: recordingsDir.path) else { return }
+
+        var loadedEntries: [HistoryEntry] = []
+
         do {
-            let data = try Data(contentsOf: historyURL)
-            entries = try JSONDecoder().decode([HistoryEntry].self, from: data)
-                .sorted { $0.timestamp > $1.timestamp }
+            let contents = try fileManager.contentsOfDirectory(at: recordingsDir, includingPropertiesForKeys: nil)
+
+            for item in contents {
+                var isDir: ObjCBool = false
+                guard fileManager.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue else {
+                    // Skip non-directories (e.g., leftover flat .caf files from old format)
+                    continue
+                }
+
+                // Use folder name as authoritative entry ID; skip if not a valid UUID
+                let folderName = item.lastPathComponent
+                guard let folderId = UUID(uuidString: folderName) else {
+                    os_log("Skipping non-UUID folder: %@", log: logger, type: .debug, folderName)
+                    continue
+                }
+
+                let metadataURL = item.appendingPathComponent("metadata.json")
+                let rawTranscriptURL = item.appendingPathComponent("raw.txt")
+                let polishedTranscriptURL = item.appendingPathComponent("polished.txt")
+                let audioURL = item.appendingPathComponent("audio.caf")
+
+                do {
+                    let metadataData = try Data(contentsOf: metadataURL)
+                    let decoder = JSONDecoder()
+                    let metadata = try decoder.decode(RecordingMetadata.self, from: metadataData)
+
+                    let rawTranscript = try String(contentsOf: rawTranscriptURL, encoding: .utf8)
+                    let polishedTranscript = try String(contentsOf: polishedTranscriptURL, encoding: .utf8)
+
+                    let audioFileName = fileManager.fileExists(atPath: audioURL.path) ? "audio.caf" : nil
+
+                    // Use folder's UUID, not metadata.id, as the authoritative entry ID
+                    let entry = HistoryEntry(
+                        id: folderId,
+                        timestamp: metadata.timestamp,
+                        rawTranscript: rawTranscript,
+                        polishedTranscript: polishedTranscript,
+                        audioFileName: audioFileName
+                    )
+                    loadedEntries.append(entry)
+                } catch {
+                    os_log("Failed to load entry from %@: %@", log: logger, type: .debug, folderName, error.localizedDescription)
+                    // Skip this folder and continue
+                }
+            }
+
+            // Sort by timestamp descending, with UUID string as tie-breaker for consistent ordering
+            entries = loadedEntries.sorted { ($0.timestamp, $0.id.uuidString) > ($1.timestamp, $1.id.uuidString) }
             os_log("Loaded %d history entries", log: logger, type: .info, entries.count)
         } catch {
             os_log("Failed to load history: %@", log: logger, type: .error, error.localizedDescription)
         }
     }
 
-    private func save() {
-        do {
-            try fileManager.createDirectory(at: baseDir, withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(entries)
-            try data.write(to: historyURL)
-        } catch {
-            os_log("Failed to save history: %@", log: logger, type: .error, error.localizedDescription)
-        }
-    }
-
     /// Save a completed transcription (and its source audio) into history.
-    /// Pruning of the oldest entries beyond `maxEntries` happens here, deleting their audio too.
+    /// Pruning of the oldest entries beyond `maxEntries` happens here, deleting their folders too.
     @discardableResult
     func addEntry(rawTranscript: String, polishedTranscript: String, audioSamples: [Float], sampleRate: Double) -> HistoryEntry {
         let id = UUID()
+        let now = Date()
         var audioFileName: String?
 
+        let entryFolder = recordingsDir.appendingPathComponent(id.uuidString, isDirectory: true)
+
         do {
-            try fileManager.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
-            let fileName = "\(id.uuidString).caf"
-            let url = recordingsDir.appendingPathComponent(fileName)
-            try Self.writeAudio(samples: audioSamples, sampleRate: sampleRate, to: url)
-            audioFileName = fileName
+            try fileManager.createDirectory(at: entryFolder, withIntermediateDirectories: true)
+
+            // Write audio if samples provided. Audio failures are logged but don't prevent transcript persistence.
+            if !audioSamples.isEmpty {
+                do {
+                    let audioURL = entryFolder.appendingPathComponent("audio.caf")
+                    try Self.writeAudio(samples: audioSamples, sampleRate: sampleRate, to: audioURL)
+                    audioFileName = "audio.caf"
+                } catch {
+                    os_log("Failed to save recording audio: %@", log: logger, type: .debug, error.localizedDescription)
+                }
+            }
+
+            // Write raw transcript
+            let rawURL = entryFolder.appendingPathComponent("raw.txt")
+            try rawTranscript.write(to: rawURL, atomically: true, encoding: .utf8)
+
+            // Write polished transcript
+            let polishedURL = entryFolder.appendingPathComponent("polished.txt")
+            try polishedTranscript.write(to: polishedURL, atomically: true, encoding: .utf8)
+
+            // Write metadata with atomic write
+            let metadata = RecordingMetadata(id: id, timestamp: now)
+            let metadataURL = entryFolder.appendingPathComponent("metadata.json")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let metadataData = try encoder.encode(metadata)
+            try metadataData.write(to: metadataURL, options: .atomic)
         } catch {
-            os_log("Failed to save recording audio: %@", log: logger, type: .error, error.localizedDescription)
+            os_log("Failed to save entry: %@", log: logger, type: .error, error.localizedDescription)
+            // Clean up partial folder on transcript/metadata failure to prevent orphaned entries
+            try? fileManager.removeItem(at: entryFolder)
         }
 
         let entry = HistoryEntry(
             id: id,
+            timestamp: now,
             rawTranscript: rawTranscript,
             polishedTranscript: polishedTranscript,
             audioFileName: audioFileName
@@ -106,30 +173,28 @@ final class HistoryStore {
 
         if entries.count > maxEntries {
             for stale in entries[maxEntries...] {
-                deleteAudio(for: stale)
+                deleteFolder(for: stale)
             }
             entries = Array(entries.prefix(maxEntries))
         }
 
-        save()
         return entry
     }
 
     func delete(_ entry: HistoryEntry) {
         entries.removeAll { $0.id == entry.id }
-        deleteAudio(for: entry)
-        save()
+        deleteFolder(for: entry)
     }
 
     func audioURL(for entry: HistoryEntry) -> URL? {
-        guard let name = entry.audioFileName else { return nil }
-        let url = recordingsDir.appendingPathComponent(name)
+        guard entry.audioFileName != nil else { return nil }
+        let url = recordingsDir.appendingPathComponent(entry.id.uuidString).appendingPathComponent("audio.caf")
         return fileManager.fileExists(atPath: url.path) ? url : nil
     }
 
-    private func deleteAudio(for entry: HistoryEntry) {
-        guard let name = entry.audioFileName else { return }
-        try? fileManager.removeItem(at: recordingsDir.appendingPathComponent(name))
+    private func deleteFolder(for entry: HistoryEntry) {
+        let folderURL = recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        try? fileManager.removeItem(at: folderURL)
     }
 
     private static func writeAudio(samples: [Float], sampleRate: Double, to url: URL) throws {

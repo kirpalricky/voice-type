@@ -68,6 +68,43 @@ struct HistoryStoreTests {
         #expect(store.entries.count == initialCount + 1)
     }
 
+    @Test
+    func addEntry_CreatesPerFolderStructure() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry = store.addEntry(
+            rawTranscript: "audio test",
+            polishedTranscript: "Audio Test",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        let entryFolder = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+
+        // Check that folder exists
+        #expect(FileManager.default.fileExists(atPath: entryFolder.path))
+
+        // Check that audio.caf exists
+        let audioURL = entryFolder.appendingPathComponent("audio.caf")
+        #expect(FileManager.default.fileExists(atPath: audioURL.path))
+
+        // Check that raw.txt exists and has correct content
+        let rawURL = entryFolder.appendingPathComponent("raw.txt")
+        #expect(FileManager.default.fileExists(atPath: rawURL.path))
+        let rawContent = try? String(contentsOf: rawURL, encoding: .utf8)
+        #expect(rawContent == "audio test")
+
+        // Check that polished.txt exists and has correct content
+        let polishedURL = entryFolder.appendingPathComponent("polished.txt")
+        #expect(FileManager.default.fileExists(atPath: polishedURL.path))
+        let polishedContent = try? String(contentsOf: polishedURL, encoding: .utf8)
+        #expect(polishedContent == "Audio Test")
+
+        // Check that metadata.json exists
+        let metadataURL = entryFolder.appendingPathComponent("metadata.json")
+        #expect(FileManager.default.fileExists(atPath: metadataURL.path))
+    }
 
     @Test
     func addEntry_SavesAudioFile() {
@@ -80,12 +117,34 @@ struct HistoryStoreTests {
             audioSamples: Self.createSampleAudio(),
             sampleRate: 48000
         )
-        #expect(entry.audioFileName != nil)
-        #expect(entry.audioFileName?.hasSuffix(".caf") ?? false)
+        #expect(entry.audioFileName == "audio.caf")
 
-        // Verify file exists
-        let audioURL = store.recordingsDir.appendingPathComponent(entry.audioFileName!)
+        // Verify file exists in the per-folder structure
+        let audioURL = store.recordingsDir.appendingPathComponent(entry.id.uuidString).appendingPathComponent("audio.caf")
         #expect(FileManager.default.fileExists(atPath: audioURL.path))
+    }
+
+    @Test
+    func addEntry_WithoutAudioSamples() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry = store.addEntry(
+            rawTranscript: "no audio",
+            polishedTranscript: "No Audio",
+            audioSamples: [],
+            sampleRate: 48000
+        )
+
+        #expect(entry.audioFileName == nil)
+
+        let entryFolder = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        let audioURL = entryFolder.appendingPathComponent("audio.caf")
+        #expect(!FileManager.default.fileExists(atPath: audioURL.path))
+
+        // But other files should exist
+        let rawURL = entryFolder.appendingPathComponent("raw.txt")
+        #expect(FileManager.default.fileExists(atPath: rawURL.path))
     }
 
     @Test
@@ -137,12 +196,12 @@ struct HistoryStoreTests {
     }
 
     @Test
-    func addEntry_DeletesAudioOfPrunedEntry() async throws {
+    func addEntry_DeletesFolderOfPrunedEntry() async throws {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = HistoryStore(baseDirectoryOverride: tempDir)
 
-        var prunedAudioFileName: String?
+        var prunedEntryId: UUID?
 
         for i in 0...100 {
             let entry = store.addEntry(
@@ -152,25 +211,25 @@ struct HistoryStoreTests {
                 sampleRate: 48000
             )
             if i == 0 {
-                prunedAudioFileName = entry.audioFileName
+                prunedEntryId = entry.id
             }
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
 
-        // The audio file of the first (pruned) entry should be deleted
-        if let fileName = prunedAudioFileName {
-            let audioURL = store.recordingsDir.appendingPathComponent(fileName)
-            #expect(!FileManager.default.fileExists(atPath: audioURL.path))
+        // The folder of the first (pruned) entry should be deleted
+        if let entryId = prunedEntryId {
+            let folderURL = store.recordingsDir.appendingPathComponent(entryId.uuidString, isDirectory: true)
+            #expect(!FileManager.default.fileExists(atPath: folderURL.path))
         }
     }
 
     @Test
-    func addEntry_PreservesRemainingAudioFiles() async throws {
+    func addEntry_PreservesRemainingFolders() async throws {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = HistoryStore(baseDirectoryOverride: tempDir)
 
-        var savedFileNames: Set<String> = []
+        var savedEntryIds: Set<UUID> = []
 
         for i in 0...100 {
             let entry = store.addEntry(
@@ -179,19 +238,18 @@ struct HistoryStoreTests {
                 audioSamples: Self.createSampleAudio(),
                 sampleRate: 48000
             )
-            if i > 0 && i <= 100 {
-                if let fileName = entry.audioFileName {
-                    savedFileNames.insert(fileName)
-                }
+            if i > 0 {
+                // Keep all entries except the first (which gets pruned when count > 100)
+                savedEntryIds.insert(entry.id)
             }
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
 
-        // All remaining entries' audio files should exist
-        for fileName in savedFileNames {
-            let audioURL = store.recordingsDir.appendingPathComponent(fileName)
-            #expect(FileManager.default.fileExists(atPath: audioURL.path),
-                   "Audio file should exist: \(fileName)")
+        // All remaining entries' folders should exist (100 entries after pruning)
+        for entryId in savedEntryIds {
+            let folderURL = store.recordingsDir.appendingPathComponent(entryId.uuidString, isDirectory: true)
+            #expect(FileManager.default.fileExists(atPath: folderURL.path),
+                   "Entry folder should exist: \(entryId.uuidString)")
         }
     }
 
@@ -215,7 +273,7 @@ struct HistoryStoreTests {
     }
 
     @Test
-    func delete_RemovesAudioFile() {
+    func delete_RemovesEntireFolder() {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = HistoryStore(baseDirectoryOverride: tempDir)
@@ -225,16 +283,12 @@ struct HistoryStoreTests {
             audioSamples: Self.createSampleAudio(),
             sampleRate: 48000
         )
-        guard let fileName = entry.audioFileName else {
-            #expect(Bool(false), "Audio file should have been created")
-            return
-        }
 
-        let audioURL = store.recordingsDir.appendingPathComponent(fileName)
-        #expect(FileManager.default.fileExists(atPath: audioURL.path))
+        let folderURL = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: folderURL.path))
 
         store.delete(entry)
-        #expect(!FileManager.default.fileExists(atPath: audioURL.path))
+        #expect(!FileManager.default.fileExists(atPath: folderURL.path))
     }
 
     @Test
@@ -291,22 +345,7 @@ struct HistoryStoreTests {
     // MARK: - Load Tests
 
     @Test
-    func load_CorruptedJSON_LeavesEmpty() throws {
-        let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDirLocal) }
-
-        // Write corrupt JSON to the history file
-        let historyURL = tempDirLocal.appendingPathComponent("history.json")
-        try "invalid json {{{".write(to: historyURL, atomically: true, encoding: .utf8)
-
-        // Create a new store - should handle error gracefully and leave entries empty
-        let newStore = HistoryStore(baseDirectoryOverride: tempDirLocal)
-        #expect(newStore.entries.count == 0)
-    }
-
-    @Test
-    func load_MissingFile_StartsEmpty() throws {
+    func load_EmptyDir_StartsEmpty() throws {
         let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDirLocal) }
@@ -314,6 +353,92 @@ struct HistoryStoreTests {
         // Create a new store - should start empty
         let newStore = HistoryStore(baseDirectoryOverride: tempDirLocal)
         #expect(newStore.entries.count == 0)
+    }
+
+    @Test
+    func load_IgnoresLegacyFlatCAFFiles() throws {
+        let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirLocal) }
+
+        // Simulate old format: a flat .caf file directly in Recordings dir
+        let recordingsDir = tempDirLocal.appendingPathComponent("Recordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
+        let legacyCAFURL = recordingsDir.appendingPathComponent("old-uuid-1234.caf")
+        try "fake audio data".write(to: legacyCAFURL, atomically: true, encoding: .utf8)
+
+        // Create a new store - should ignore the flat .caf file and load empty
+        let newStore = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        #expect(newStore.entries.count == 0)
+        // Flat file should still exist (not deleted)
+        #expect(FileManager.default.fileExists(atPath: legacyCAFURL.path))
+    }
+
+    @Test
+    func load_ReconstructsEntriesFromDisk() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Add entries with the first store
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry1 = store1.addEntry(
+            rawTranscript: "first raw",
+            polishedTranscript: "First Polished",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+        // Small delay to ensure different timestamps
+        try? await Task.sleep(nanoseconds: 1_000_000)
+        let entry2 = store1.addEntry(
+            rawTranscript: "second raw",
+            polishedTranscript: "Second Polished",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Create a fresh store pointing at the same directory
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Should load both entries
+        #expect(store2.entries.count == 2)
+
+        // Entries should be in reverse order (newest first)
+        #expect(store2.entries[0].id == entry2.id)
+        #expect(store2.entries[1].id == entry1.id)
+
+        // Content should be preserved
+        #expect(store2.entries[0].rawTranscript == "second raw")
+        #expect(store2.entries[0].polishedTranscript == "Second Polished")
+        #expect(store2.entries[1].rawTranscript == "first raw")
+        #expect(store2.entries[1].polishedTranscript == "First Polished")
+    }
+
+    @Test
+    func load_CorruptedFolder_SkipsAndContinues() throws {
+        let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirLocal) }
+
+        // Create one valid entry
+        let store = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        let validEntry = store.addEntry(
+            rawTranscript: "valid",
+            polishedTranscript: "Valid",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Create a corrupted folder (missing metadata.json)
+        let recordingsDir = tempDirLocal.appendingPathComponent("Recordings", isDirectory: true)
+        let corruptedFolder = recordingsDir.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: corruptedFolder, withIntermediateDirectories: true)
+        let rawURL = corruptedFolder.appendingPathComponent("raw.txt")
+        try "raw text".write(to: rawURL, atomically: true, encoding: .utf8)
+
+        // Load should skip corrupted folder and still load the valid one
+        let newStore = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        #expect(newStore.entries.count == 1)
+        #expect(newStore.entries[0].id == validEntry.id)
     }
 
     // MARK: - audioURL Tests
@@ -345,7 +470,7 @@ struct HistoryStoreTests {
             id: UUID(),
             rawTranscript: "test",
             polishedTranscript: "Test",
-            audioFileName: "nonexistent.caf"
+            audioFileName: "audio.caf"
         )
         let url = store.audioURL(for: entry)
         #expect(url == nil)
@@ -362,7 +487,7 @@ struct HistoryStoreTests {
             audioSamples: Self.createSampleAudio(),
             sampleRate: 48000
         )
-        guard let fileName = entry.audioFileName else {
+        guard entry.audioFileName != nil else {
             #expect(Bool(false), "Audio file should have been created")
             return
         }
@@ -370,7 +495,145 @@ struct HistoryStoreTests {
         let url = store.audioURL(for: entry)
         #expect(url != nil)
         #expect(FileManager.default.fileExists(atPath: url?.path ?? ""))
-        #expect(url?.lastPathComponent.hasSuffix(".caf") ?? false)
+        #expect(url?.lastPathComponent == "audio.caf")
     }
 
+    // MARK: - Sub-Second Precision & Tie-Breaking Tests
+
+    @Test
+    func load_SubSecondFidelity_NoDelay() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Add two entries with NO delay between them
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry1 = store1.addEntry(
+            rawTranscript: "first",
+            polishedTranscript: "First",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+        let entry2 = store1.addEntry(
+            rawTranscript: "second",
+            polishedTranscript: "Second",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Reload and verify order is preserved and timestamps have sub-second precision
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        #expect(store2.entries.count == 2)
+        #expect(store2.entries[0].id == entry2.id, "Newest entry should be first after reload")
+        #expect(store2.entries[1].id == entry1.id, "Older entry should be second after reload")
+
+        // Verify timestamps have sub-second fidelity (within 1ms)
+        #expect(abs(store2.entries[1].timestamp.timeIntervalSince(entry1.timestamp)) < 0.001,
+               "Reloaded timestamp should match original within 1ms")
+    }
+
+    @Test
+    func addEntry_AudioFailurePreservesTranscripts() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Add entry without audio samples (simulates audio write being skipped or failing)
+        let entry = store.addEntry(
+            rawTranscript: "audio not saved",
+            polishedTranscript: "Audio Not Saved",
+            audioSamples: [],  // Empty audio samples means audio write is skipped
+            sampleRate: 48000
+        )
+
+        // Entry should be in memory (with no audioFileName)
+        #expect(entry.audioFileName == nil)
+        #expect(store.entries.count == 1)
+
+        // Reload and verify transcripts were persisted even without audio
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        #expect(store2.entries.count == 1)
+        #expect(store2.entries[0].rawTranscript == "audio not saved")
+        #expect(store2.entries[0].polishedTranscript == "Audio Not Saved")
+        #expect(store2.entries[0].audioFileName == nil)
+
+        // Verify folder exists with text files but no audio
+        let entryFolder = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: entryFolder.path))
+
+        let rawURL = entryFolder.appendingPathComponent("raw.txt")
+        let polishedURL = entryFolder.appendingPathComponent("polished.txt")
+        let metadataURL = entryFolder.appendingPathComponent("metadata.json")
+        let audioURL = entryFolder.appendingPathComponent("audio.caf")
+
+        #expect(FileManager.default.fileExists(atPath: rawURL.path), "raw.txt should exist")
+        #expect(FileManager.default.fileExists(atPath: polishedURL.path), "polished.txt should exist")
+        #expect(FileManager.default.fileExists(atPath: metadataURL.path), "metadata.json should exist")
+        #expect(!FileManager.default.fileExists(atPath: audioURL.path), "audio.caf should not exist without audio samples")
+    }
+
+    @Test
+    func load_RenamedFolder_UsesActualFolderName() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create an entry
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir)
+        let originalEntry = store1.addEntry(
+            rawTranscript: "rename test",
+            polishedTranscript: "Rename Test",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Simulate user renaming folder in Finder: rename it to a different UUID
+        let recordingsDir = store1.recordingsDir
+        let originalFolder = recordingsDir.appendingPathComponent(originalEntry.id.uuidString, isDirectory: true)
+        let newFolderId = UUID()
+        let renamedFolder = recordingsDir.appendingPathComponent(newFolderId.uuidString, isDirectory: true)
+
+        try? FileManager.default.moveItem(at: originalFolder, to: renamedFolder)
+
+        // Now load and verify the entry ID comes from the folder name, not metadata.id
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        #expect(store2.entries.count == 1)
+        #expect(store2.entries[0].id == newFolderId, "Loaded entry ID should match folder name, not metadata.id")
+        #expect(store2.entries[0].rawTranscript == "rename test", "Transcript should be preserved")
+    }
+
+    @Test
+    func addEntry_Exactly100_NoPruning() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+
+        var entryIds: Set<UUID> = []
+
+        // Add exactly 100 entries (which is maxEntries)
+        for i in 0..<100 {
+            let entry = store.addEntry(
+                rawTranscript: "entry \(i)",
+                polishedTranscript: "Entry \(i)",
+                audioSamples: Self.createSampleAudio(),
+                sampleRate: 48000
+            )
+            entryIds.insert(entry.id)
+            if i < 99 {
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
+        }
+
+        // Should have exactly 100 entries (no pruning yet)
+        #expect(store.entries.count == 100)
+
+        // All folders should exist
+        for entryId in entryIds {
+            let folderURL = store.recordingsDir.appendingPathComponent(entryId.uuidString, isDirectory: true)
+            #expect(FileManager.default.fileExists(atPath: folderURL.path),
+                   "All 100 entry folders should exist")
+        }
+
+        // Reload to verify all 100 persisted
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        #expect(store2.entries.count == 100)
+    }
 }
