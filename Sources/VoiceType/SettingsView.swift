@@ -334,20 +334,22 @@ struct HistorySettingsTab: View {
 
     @State private var selectedEntryID: UUID?
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
+    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var showingRawInDetail = false
 
     var filteredEntries: [HistoryEntry] {
-        if searchText.isEmpty {
+        if debouncedSearchText.isEmpty {
             return historyStore.entries
         }
-        return historyStore.entries.filter { entry in
-            entry.rawTranscript.localizedCaseInsensitiveContains(searchText) ||
-            entry.polishedTranscript.localizedCaseInsensitiveContains(searchText)
-        }
+        let query = debouncedSearchText.lowercased()
+        return historyStore.entries.filter { $0.searchHaystack.contains(query) }
     }
 
+    // Looks up by ID directly against the full entry list (not filteredEntries), so the
+    // selected entry doesn't vanish/re-resolve incorrectly while the search filter is in flux.
     var selectedEntry: HistoryEntry? {
-        filteredEntries.first { $0.id == selectedEntryID }
+        historyStore.entries.first { $0.id == selectedEntryID }
     }
 
     var body: some View {
@@ -464,6 +466,15 @@ struct HistorySettingsTab: View {
                 }
             }
         }
+        .onChange(of: searchText) { _, newValue in
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                if !Task.isCancelled {
+                    debouncedSearchText = newValue
+                }
+            }
+        }
     }
 }
 
@@ -500,9 +511,11 @@ private struct HistoryRow: View {
                 .buttonStyle(.plain)
                 .help("Copy transcript")
 
-                if let audioURL = historyStore.audioURL(for: entry) {
+                if entry.hasAudio {
                     Button(action: {
-                        NSWorkspace.shared.activateFileViewerSelecting([audioURL])
+                        if let audioURL = historyStore.audioURL(for: entry) {
+                            NSWorkspace.shared.activateFileViewerSelecting([audioURL])
+                        }
                     }) {
                         Image(systemName: "waveform")
                     }
