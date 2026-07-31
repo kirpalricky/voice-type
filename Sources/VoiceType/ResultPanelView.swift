@@ -163,7 +163,7 @@ struct ResultPanelView: View {
                         // feels alive instead of collapsing to a dead flat line.
                         let jitter = 0.5 + 0.5 * sin(t * 3 + Double(index) * 0.9)
                         let idleFloor = 3 + 4 * CGFloat(pulse) + 3 * CGFloat(jitter)
-                        let height = max(lvl * size.height, idleFloor)
+                        let height = max(lvl * size.height * 0.7, idleFloor)
 
                         // Opacity tracks amplitude (loud = fully opaque, quiet = dim) with
                         // a gentle center-favoring fade so the row isn't uniformly flat. A
