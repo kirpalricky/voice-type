@@ -2,38 +2,7 @@
 
 ## Open (stack ranked)
 
-1. **History storage scale-up, Stage 2 — Decouple entry paths from
-   folder-name-as-ID.** Add `folderURL: URL` to `HistoryEntry`, populate
-   at load/add time. Switch authoritative ID from folder name to
-   `metadata.id` (currently `load()` explicitly ignores `metadata.id` in
-   favor of the folder name — flip this). Replace the 3 hardcoded
-   `recordingsDir.appendingPathComponent(id.uuidString)` call sites
-   (`addEntry`, `audioURL(for:)`, `deleteFolder(for:)`) with
-   `entry.folderURL`.
-   - **Why:** makes folder layout a property of data rather than a
-     formula — prerequisite for Stage 6 and for any future layout
-     change to be safe/reversible.
-
-2. **History storage scale-up, Stage 3 — History UI perf fixes.** In
-   `SettingsView.swift`: precompute a lowercased search haystack per
-   entry (avoid `localizedCaseInsensitiveContains` — ICU collation —
-   recomputing in `body` every keystroke), debounce search ~150ms via
-   `.onChange(of: searchText)`, fix `selectedEntry` to look up by ID
-   directly instead of re-filtering `filteredEntries`, and cache a
-   `hasAudio` flag on the entry so `HistoryRow` stops calling
-   `fileExists` on every row render.
-   - **Why:** invisible at 100 entries, will visibly lag at thousands.
-
-3. **History storage scale-up, Stage 4 — Async startup load + index
-   cache.** `HistoryStore()` currently does a synchronous full-directory
-   scan in `init` (`VoiceTypeApp.swift:12`), blocking hotkey
-   registration at launch. Add a `Recordings/index.json` cache (written
-   on add/delete) that launch reads first, falling back to a full scan
-   only if missing/stale; move the fallback scan off the main thread.
-   - **Why:** must land before Stage 5 raises the entry cap, or launch
-     time regresses hard.
-
-4. **History storage scale-up, Stage 5 — Raise `maxEntries` to 5000.**
+1. **History storage scale-up, Stage 5 — Raise `maxEntries` to 5000.**
    Single count-based cap for both transcripts and audio (user
    explicitly deferred a separate audio byte/age budget — revisit later
    if disk usage becomes a concern, mitigated significantly by Stage 1's
@@ -44,14 +13,14 @@
    but still inserts the entry into `entries`, producing an in-memory
    entry with no backing folder that silently no-ops on delete).
 
-5. **History storage scale-up, Stage 6 (optional/deferred) — Cosmetic
+2. **History storage scale-up, Stage 6 (optional/deferred) — Cosmetic
    sortable folder names.** Rename UUID folders to
    `<yyyyMMdd-HHmmss>-<uuid>` for Finder chronological sort. Depends on
    Stage 2 landing first (folder name must stop being the authoritative
    ID before it's safe to change). Best-effort, idempotent migration on
    load; skip any folder that errors.
 
-6. **Reprocess history entries from raw audio.** `HistoryStore`
+3. **Reprocess history entries from raw audio.** `HistoryStore`
   ([HistoryStore.swift](Sources/VoiceType/HistoryStore.swift)) already
   saves the source audio per entry (`audioFileName`, `audioURL(for:)`),
   but there's no way to re-run transcription/polishing on it after the
@@ -70,6 +39,48 @@
     pipeline (currently under active iteration) settles down.
 
 ## Done
+
+- History storage scale-up, Stage 4 — Async startup load + index
+  cache. `HistoryStore.load()` now checks a `Recordings`-sibling
+  `index.json` (an envelope of `{folderNames, entries}`) against a
+  shallow directory listing; if the folder-name sets match, `entries`
+  is populated synchronously from the cache with no per-folder disk
+  reads. Only on a mismatch (folders added/removed/renamed since the
+  cache was written, or a missing/corrupt cache) does it fall back to
+  the full per-folder scan, now run off the main thread via
+  `Task.detached` and hopped back via `MainActor.run`. Recording the
+  full set of *observed* folder names (not just successfully-parsed
+  ones) means a single corrupt/legacy folder no longer defeats the
+  cache on every future launch. The async fallback merges its results
+  into whatever's already in `entries` by `id` (dropping any whose
+  folder no longer exists) rather than overwriting outright, so a
+  concurrent `addEntry`/`delete` during the scan window can't discard
+  real history or resurrect a deleted entry. `addEntry`/`delete`
+  persist the index after mutating `entries`. `HistoryEntry` gained
+  explicit `CodingKeys` excluding `searchHaystack` (recomputed on
+  decode) to keep the cache from duplicating transcript text. 116
+  tests pass.
+
+- History storage scale-up, Stage 3 — History UI perf fixes. In
+  `SettingsView.swift`: `filteredEntries` now filters on a precomputed
+  `searchHaystack` (lowercased `rawTranscript + polishedTranscript`,
+  cached on `HistoryEntry` at construction) instead of re-running
+  `localizedCaseInsensitiveContains` per keystroke; search is debounced
+  ~150ms via `.onChange(of: searchText)`; `selectedEntry` looks up by ID
+  against the full `historyStore.entries` instead of re-filtering
+  `filteredEntries`, so selection survives the entry being filtered out
+  mid-search; `HistoryRow` gates its "reveal in Finder" button on a
+  computed `hasAudio` flag (cheap nil-check, not stored — kept
+  non-persisted so Stage 4's index cache can't decode it stale) instead
+  of calling `audioURL(for:)`'s `fileExists` check on every render. 108
+  tests pass.
+
+- History storage scale-up, Stage 2 — Decoupled `HistoryEntry` from
+  folder-name-as-ID. Added `folderURL: URL` to `HistoryEntry`;
+  authoritative ID is now `metadata.id` (not the folder name), so
+  folders no longer need UUID names. `audioURL(for:)` and
+  `deleteFolder(for:)` use `entry.folderURL` instead of recomputing
+  paths. 108 tests pass.
 
 - Draggable recording panel. `ResultPanelWindow.swift` now sets
   `panel.isMovable`/`isMovableByWindowBackground = true`, and persists
