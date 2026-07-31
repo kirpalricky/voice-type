@@ -86,7 +86,7 @@ struct HistoryIndex: Codable {
 final class HistoryStore {
     @ObservationIgnored private let fileManager = FileManager.default
     @ObservationIgnored private let logger = OSLog(subsystem: "com.voicetype.history", category: "HistoryStore")
-    @ObservationIgnored private let maxEntries = 100
+    @ObservationIgnored private let maxEntries: Int
     @ObservationIgnored private let baseDirectoryOverride: URL?
     @ObservationIgnored private var pendingLoadTask: Task<Void, Never>?
 
@@ -108,8 +108,9 @@ final class HistoryStore {
         baseDir.appendingPathComponent("index.json")
     }
 
-    init(baseDirectoryOverride: URL? = nil) {
+    init(baseDirectoryOverride: URL? = nil, maxEntriesOverride: Int? = nil) {
         self.baseDirectoryOverride = baseDirectoryOverride
+        self.maxEntries = maxEntriesOverride ?? 5000
         load()
     }
 
@@ -143,7 +144,13 @@ final class HistoryStore {
 
                     if actualFolderNames == cachedFolderNames {
                         // Fast path: cache is valid, use it synchronously
-                        entries = cachedIndex.entries
+                        // Sort defensively before pruning — pruneExcessEntries() deletes by array
+                        // position, so an out-of-order cache (e.g. hand-edited index.json) must not
+                        // be allowed to cause the wrong folders to be deleted.
+                        entries = cachedIndex.entries.sorted { ($0.timestamp, $0.id.uuidString) > ($1.timestamp, $1.id.uuidString) }
+                        if pruneExcessEntries() {
+                            writeIndex()
+                        }
                         os_log("Loaded %d history entries from cache", log: logger, type: .info, entries.count)
                         return
                     }
@@ -235,7 +242,15 @@ final class HistoryStore {
         // Re-sort with the standard comparator
         merged.sort { ($0.timestamp, $0.id.uuidString) > ($1.timestamp, $1.id.uuidString) }
         entries = merged
-        writeIndex(observedFolderNames: observedFolderNames)
+
+        let pruned = pruneExcessEntries()
+        if pruned {
+            // Pruning deleted folders on disk, so the caller-provided observedFolderNames
+            // (captured before pruning) is now stale — force writeIndex to do a fresh listing.
+            writeIndex()
+        } else {
+            writeIndex(observedFolderNames: observedFolderNames)
+        }
     }
 
     nonisolated private static func scanDirectory(_ recordingsDir: URL, fileManager: FileManager, logger: OSLog) -> (entries: [HistoryEntry], folderNames: [String]) {
@@ -312,7 +327,7 @@ final class HistoryStore {
     }
 
     /// Save a completed transcription (and its source audio) into history.
-    /// Pruning of the oldest entries beyond `maxEntries` happens here, deleting their folders too.
+    /// Pruning of the oldest entries beyond `maxEntries` happens here (and also in `load()`), deleting their folders too.
     @discardableResult
     func addEntry(rawTranscript: String, polishedTranscript: String, audioSamples: [Float], sampleRate: Double) -> HistoryEntry {
         let id = UUID()
@@ -320,6 +335,7 @@ final class HistoryStore {
         var audioFileName: String?
 
         let entryFolder = recordingsDir.appendingPathComponent(id.uuidString, isDirectory: true)
+        var didPersist = false
 
         do {
             try fileManager.createDirectory(at: entryFolder, withIntermediateDirectories: true)
@@ -350,6 +366,8 @@ final class HistoryStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let metadataData = try encoder.encode(metadata)
             try metadataData.write(to: metadataURL, options: .atomic)
+
+            didPersist = true
         } catch {
             os_log("Failed to save entry: %@", log: logger, type: .error, error.localizedDescription)
             // Clean up partial folder on transcript/metadata failure to prevent orphaned entries
@@ -364,15 +382,15 @@ final class HistoryStore {
             audioFileName: audioFileName,
             folderURL: entryFolder
         )
-        entries.insert(entry, at: 0)
 
-        if entries.count > maxEntries {
-            for stale in entries[maxEntries...] {
-                deleteFolder(for: stale)
-            }
-            entries = Array(entries.prefix(maxEntries))
+        guard didPersist else {
+            // Folder write failed and was cleaned up — do not add a phantom in-memory
+            // entry with no backing folder (it would silently no-op on delete).
+            return entry
         }
 
+        entries.insert(entry, at: 0)
+        pruneExcessEntries()
         writeIndex()
         return entry
     }
@@ -390,7 +408,23 @@ final class HistoryStore {
     }
 
     private func deleteFolder(for entry: HistoryEntry) {
-        try? fileManager.removeItem(at: entry.folderURL)
+        do {
+            try fileManager.removeItem(at: entry.folderURL)
+        } catch {
+            os_log("Failed to delete entry folder %@: %@", log: logger, type: .error, entry.folderURL.path, error.localizedDescription)
+        }
+    }
+
+    /// Trims `entries` to `maxEntries`, deleting the folders of any pruned entries.
+    /// Returns true if any entries were pruned.
+    @discardableResult
+    private func pruneExcessEntries() -> Bool {
+        guard entries.count > maxEntries else { return false }
+        for stale in entries[maxEntries...] {
+            deleteFolder(for: stale)
+        }
+        entries = Array(entries.prefix(maxEntries))
+        return true
     }
 
     private func writeIndex(observedFolderNames: [String]? = nil) {
@@ -417,7 +451,7 @@ final class HistoryStore {
 
             let index = HistoryIndex(folderNames: folderNames, entries: entries)
             let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.outputFormatting = [.sortedKeys]
             let indexData = try encoder.encode(index)
             try indexData.write(to: indexURL, options: .atomic)
         } catch {

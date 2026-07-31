@@ -2,25 +2,14 @@
 
 ## Open (stack ranked)
 
-1. **History storage scale-up, Stage 5 — Raise `maxEntries` to 5000.**
-   Single count-based cap for both transcripts and audio (user
-   explicitly deferred a separate audio byte/age budget — revisit later
-   if disk usage becomes a concern, mitigated significantly by Stage 1's
-   ~16x size cut). Also: run the prune pass after `load()` (currently
-   only runs inside `addEntry`, so a lowered cap or an already-over-cap
-   disk state never gets pruned), and fix the phantom-entry bug in
-   `addEntry`'s failure path (a folder-write failure removes the folder
-   but still inserts the entry into `entries`, producing an in-memory
-   entry with no backing folder that silently no-ops on delete).
-
-2. **History storage scale-up, Stage 6 (optional/deferred) — Cosmetic
+1. **History storage scale-up, Stage 6 (optional/deferred) — Cosmetic
    sortable folder names.** Rename UUID folders to
    `<yyyyMMdd-HHmmss>-<uuid>` for Finder chronological sort. Depends on
    Stage 2 landing first (folder name must stop being the authoritative
    ID before it's safe to change). Best-effort, idempotent migration on
    load; skip any folder that errors.
 
-3. **Reprocess history entries from raw audio.** `HistoryStore`
+2. **Reprocess history entries from raw audio.** `HistoryStore`
   ([HistoryStore.swift](Sources/VoiceType/HistoryStore.swift)) already
   saves the source audio per entry (`audioFileName`, `audioURL(for:)`),
   but there's no way to re-run transcription/polishing on it after the
@@ -39,6 +28,18 @@
     pipeline (currently under active iteration) settles down.
 
 ## Done
+
+- History storage scale-up, Stage 5 — Raise `maxEntries` to 5000. Single
+  count-based cap for both transcripts and audio (user explicitly deferred
+  a separate audio byte/age budget — revisit later if disk usage becomes a
+  concern, mitigated significantly by Stage 1's ~16x size cut). Default is
+  configurable via `maxEntriesOverride` init parameter for testability.
+  Prune pass now also runs after `load()`'s fast-cache-hit path and after
+  the async scan-merge path (not just inside `addEntry`), so a lowered cap
+  or an already-over-cap disk state gets pruned properly. Fixed phantom-entry
+  bug in `addEntry`'s failure path: folder-write failures now prevent the
+  entry from being inserted into `entries`, avoiding an in-memory entry with
+  no backing folder that would silently no-op on delete.
 
 - History storage scale-up, Stage 4 — Async startup load + index
   cache. `HistoryStore.load()` now checks a `Recordings`-sibling

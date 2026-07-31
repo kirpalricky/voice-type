@@ -171,7 +171,7 @@ struct HistoryStoreTests {
     func addEntry_PrunesOldestWhenExceedsMax() async throws {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let store = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
 
         // Add maxEntries + 1 entries
         var firstEntryId: UUID?
@@ -199,7 +199,7 @@ struct HistoryStoreTests {
     func addEntry_DeletesFolderOfPrunedEntry() async throws {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let store = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
 
         var prunedEntryId: UUID?
 
@@ -227,7 +227,7 @@ struct HistoryStoreTests {
     func addEntry_PreservesRemainingFolders() async throws {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let store = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
 
         var savedEntryIds: Set<UUID> = []
 
@@ -251,6 +251,129 @@ struct HistoryStoreTests {
             #expect(FileManager.default.fileExists(atPath: folderURL.path),
                    "Entry folder should exist: \(entryId.uuidString)")
         }
+    }
+
+    @Test
+    func load_PrunesWhenCachedCountExceedsCurrentMaxEntries() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Build up 5 entries under a generous cap.
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
+        var ids: [UUID] = []
+        for i in 0..<5 {
+            let entry = store1.addEntry(
+                rawTranscript: "entry \(i)",
+                polishedTranscript: "Entry \(i)",
+                audioSamples: Self.createSampleAudio(),
+                sampleRate: 48000
+            )
+            ids.append(entry.id)
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        #expect(store1.entries.count == 5)
+
+        // Reopen with a lower cap — load() itself (via the cache fast path) should prune down to it.
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 3)
+        #expect(store2.entries.count == 3)
+
+        // The two oldest entries' folders should have been deleted by the load-time prune.
+        for oldestId in ids.prefix(2) {
+            let folderURL = store2.recordingsDir.appendingPathComponent(oldestId.uuidString, isDirectory: true)
+            #expect(!FileManager.default.fileExists(atPath: folderURL.path))
+        }
+        // The 3 newest should remain.
+        for keptId in ids.suffix(3) {
+            let folderURL = store2.recordingsDir.appendingPathComponent(keptId.uuidString, isDirectory: true)
+            #expect(FileManager.default.fileExists(atPath: folderURL.path))
+        }
+
+        // The pruned index must have been persisted — verify a fresh reopen still hits
+        // the synchronous fast path (i.e. writeIndex() actually ran after pruning).
+        let cachedIndexData = try Data(contentsOf: store2.indexURL)
+        let cachedIndex = try JSONDecoder().decode(HistoryIndex.self, from: cachedIndexData)
+        #expect(cachedIndex.entries.count == 3)
+        #expect(cachedIndex.folderNames.count == 3)
+
+        let store3 = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 3)
+        #expect(store3.entries.count == 3)
+    }
+
+    @Test
+    func addEntry_FolderWriteFailure_DoesNotInsertPhantomEntry() {
+        guard getuid() != 0 else {
+            // POSIX permission bits don't block root; this test can't simulate
+            // a folder-write failure when running as root.
+            return
+        }
+        let tempDir = createTempDir()
+        defer {
+            // Restore permissions before cleanup so removal doesn't fail.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tempDir.path)
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Make the Recordings directory read-only so entry-folder creation fails.
+        try? FileManager.default.createDirectory(at: store.recordingsDir, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: store.recordingsDir.path)
+
+        _ = store.addEntry(
+            rawTranscript: "should fail",
+            polishedTranscript: "Should Fail",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Restore write permission immediately so we can inspect/clean up.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: store.recordingsDir.path)
+
+        #expect(store.entries.isEmpty, "A failed folder write must not leave a phantom in-memory entry")
+        #expect(!FileManager.default.fileExists(atPath: store.indexURL.path) || (try? Data(contentsOf: store.indexURL)).flatMap { try? JSONDecoder().decode(HistoryIndex.self, from: $0) }?.entries.isEmpty == true, "No index entry should be persisted for a failed save")
+    }
+
+    @Test
+    func asyncScan_PrunesWhenScannedCountExceedsMaxEntries() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Build up 5 entries under a generous cap, then force the async-scan path
+        // (not the index-cache fast path) by deleting index.json.
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
+        var ids: [UUID] = []
+        for i in 0..<5 {
+            let entry = store1.addEntry(
+                rawTranscript: "entry \(i)",
+                polishedTranscript: "Entry \(i)",
+                audioSamples: Self.createSampleAudio(),
+                sampleRate: 48000
+            )
+            ids.append(entry.id)
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        try? FileManager.default.removeItem(at: store1.indexURL)
+
+        // Reopen with a lower cap and no index cache — forces the full scan + merge path.
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 3)
+        await store2.waitForPendingLoad()
+
+        #expect(store2.entries.count == 3)
+
+        for oldestId in ids.prefix(2) {
+            let folderURL = store2.recordingsDir.appendingPathComponent(oldestId.uuidString, isDirectory: true)
+            #expect(!FileManager.default.fileExists(atPath: folderURL.path))
+        }
+        for keptId in ids.suffix(3) {
+            let folderURL = store2.recordingsDir.appendingPathComponent(keptId.uuidString, isDirectory: true)
+            #expect(FileManager.default.fileExists(atPath: folderURL.path))
+        }
+
+        // The persisted index's folderNames must reflect post-prune reality (fresh
+        // listing, not the stale pre-prune observedFolderNames) so the next launch
+        // still hits the fast path instead of forcing a spurious rescan.
+        let cachedIndexData = try Data(contentsOf: store2.indexURL)
+        let cachedIndex = try JSONDecoder().decode(HistoryIndex.self, from: cachedIndexData)
+        #expect(cachedIndex.folderNames.count == 3)
     }
 
     // MARK: - Delete Tests
@@ -626,7 +749,7 @@ struct HistoryStoreTests {
     func addEntry_Exactly100_NoPruning() async throws {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let store = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
 
         var entryIds: Set<UUID> = []
 
@@ -658,7 +781,7 @@ struct HistoryStoreTests {
         try? FileManager.default.removeItem(at: store.indexURL)
 
         // Reload to verify all 100 persisted
-        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir, maxEntriesOverride: 100)
         await store2.waitForPendingLoad()
         #expect(store2.entries.count == 100)
     }
