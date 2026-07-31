@@ -292,7 +292,7 @@ struct HistoryStoreTests {
     }
 
     @Test
-    func delete_PersistsToFile() {
+    func delete_PersistsToFile() async {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = HistoryStore(baseDirectoryOverride: tempDir)
@@ -306,6 +306,7 @@ struct HistoryStoreTests {
 
         // Create a new store to verify deletion was persisted
         let newStore = HistoryStore(baseDirectoryOverride: tempDir)
+        await newStore.waitForPendingLoad()
         #expect(newStore.entries.count == 0)
     }
 
@@ -356,7 +357,7 @@ struct HistoryStoreTests {
     }
 
     @Test
-    func load_IgnoresLegacyFlatCAFFiles() throws {
+    func load_IgnoresLegacyFlatCAFFiles() async throws {
         let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDirLocal) }
@@ -369,6 +370,7 @@ struct HistoryStoreTests {
 
         // Create a new store - should ignore the flat .caf file and load empty
         let newStore = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        await newStore.waitForPendingLoad()
         #expect(newStore.entries.count == 0)
         // Flat file should still exist (not deleted)
         #expect(FileManager.default.fileExists(atPath: legacyCAFURL.path))
@@ -396,8 +398,12 @@ struct HistoryStoreTests {
             sampleRate: 48000
         )
 
+        // Delete the index to force fallback scan (test genuinely reconstructs from disk)
+        try? FileManager.default.removeItem(at: store1.indexURL)
+
         // Create a fresh store pointing at the same directory
         let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        await store2.waitForPendingLoad()
 
         // Should load both entries
         #expect(store2.entries.count == 2)
@@ -414,7 +420,7 @@ struct HistoryStoreTests {
     }
 
     @Test
-    func load_CorruptedFolder_SkipsAndContinues() throws {
+    func load_CorruptedFolder_SkipsAndContinues() async throws {
         let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDirLocal) }
@@ -437,6 +443,7 @@ struct HistoryStoreTests {
 
         // Load should skip corrupted folder and still load the valid one
         let newStore = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        await newStore.waitForPendingLoad()
         #expect(newStore.entries.count == 1)
         #expect(newStore.entries[0].id == validEntry.id)
     }
@@ -505,7 +512,7 @@ struct HistoryStoreTests {
     // MARK: - Sub-Second Precision & Tie-Breaking Tests
 
     @Test
-    func load_SubSecondFidelity_NoDelay() {
+    func load_SubSecondFidelity_NoDelay() async {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -524,8 +531,12 @@ struct HistoryStoreTests {
             sampleRate: 48000
         )
 
+        // Delete the index to force fallback scan (test genuinely reconstructs from disk)
+        try? FileManager.default.removeItem(at: store1.indexURL)
+
         // Reload and verify order is preserved and timestamps have sub-second precision
         let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        await store2.waitForPendingLoad()
         #expect(store2.entries.count == 2)
         #expect(store2.entries[0].id == entry2.id, "Newest entry should be first after reload")
         #expect(store2.entries[1].id == entry1.id, "Older entry should be second after reload")
@@ -536,7 +547,7 @@ struct HistoryStoreTests {
     }
 
     @Test
-    func addEntry_AudioFailurePreservesTranscripts() {
+    func addEntry_AudioFailurePreservesTranscripts() async {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = HistoryStore(baseDirectoryOverride: tempDir)
@@ -553,8 +564,12 @@ struct HistoryStoreTests {
         #expect(entry.audioFileName == nil)
         #expect(store.entries.count == 1)
 
+        // Delete the index to force fallback scan (test genuinely reconstructs from disk)
+        try? FileManager.default.removeItem(at: store.indexURL)
+
         // Reload and verify transcripts were persisted even without audio
         let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        await store2.waitForPendingLoad()
         #expect(store2.entries.count == 1)
         #expect(store2.entries[0].rawTranscript == "audio not saved")
         #expect(store2.entries[0].polishedTranscript == "Audio Not Saved")
@@ -576,7 +591,7 @@ struct HistoryStoreTests {
     }
 
     @Test
-    func load_RenamedFolder_PreservesMetadataIdUsesNewFolderURL() {
+    func load_RenamedFolder_PreservesMetadataIdUsesNewFolderURL() async {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -600,6 +615,7 @@ struct HistoryStoreTests {
 
         // Now load and verify the entry ID comes from metadata.id, not the new folder name
         let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        await store2.waitForPendingLoad()
         #expect(store2.entries.count == 1)
         #expect(store2.entries[0].id == originalId, "Loaded entry ID should match original metadata.id, not new folder name")
         #expect(store2.entries[0].folderURL.lastPathComponent == renamedFolder.lastPathComponent, "folderURL should point to the renamed folder location")
@@ -638,13 +654,17 @@ struct HistoryStoreTests {
                    "All 100 entry folders should exist")
         }
 
+        // Delete the index to force fallback scan (test genuinely reconstructs from disk)
+        try? FileManager.default.removeItem(at: store.indexURL)
+
         // Reload to verify all 100 persisted
         let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        await store2.waitForPendingLoad()
         #expect(store2.entries.count == 100)
     }
 
     @Test
-    func load_LegacyCAFFile_IsFoundAndUsable() throws {
+    func load_LegacyCAFFile_IsFoundAndUsable() async throws {
         let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDirLocal) }
@@ -679,6 +699,7 @@ struct HistoryStoreTests {
 
         // Load the store and verify the legacy entry is found
         let store = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        await store.waitForPendingLoad()
         #expect(store.entries.count == 1)
         let loadedEntry = store.entries[0]
 
@@ -755,5 +776,276 @@ struct HistoryStoreTests {
 
         #expect(fileSize > 0, "Audio file should have content")
         #expect(compressionRatio < 0.5, "AAC compression should reduce file to less than 50% of raw PCM (\(fileSize) bytes vs \(rawPCMSize) raw)")
+    }
+
+    // MARK: - Index Cache Tests
+
+    @Test
+    func indexCache_CreatedAfterAddEntry() throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Initially, no index.json
+        #expect(!FileManager.default.fileExists(atPath: store.indexURL.path))
+
+        // Add an entry
+        let entry = store.addEntry(
+            rawTranscript: "test",
+            polishedTranscript: "Test",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Index file should now exist
+        #expect(FileManager.default.fileExists(atPath: store.indexURL.path))
+
+        // Verify the index file contains the entry
+        let indexData = try Data(contentsOf: store.indexURL)
+        let decoder = JSONDecoder()
+        let decodedIndex = try decoder.decode(HistoryIndex.self, from: indexData)
+        #expect(decodedIndex.entries.count == 1)
+        #expect(decodedIndex.entries[0].id == entry.id)
+        #expect(decodedIndex.entries[0].rawTranscript == "test")
+    }
+
+    @Test
+    func indexCache_UpdatedAfterDelete() throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Add two entries
+        let entry1 = store.addEntry(
+            rawTranscript: "entry 1",
+            polishedTranscript: "Entry 1",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+        let entry2 = store.addEntry(
+            rawTranscript: "entry 2",
+            polishedTranscript: "Entry 2",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Delete the first entry
+        store.delete(entry1)
+
+        // Verify index file is updated
+        let indexData = try Data(contentsOf: store.indexURL)
+        let decoder = JSONDecoder()
+        let decodedIndex = try decoder.decode(HistoryIndex.self, from: indexData)
+        #expect(decodedIndex.entries.count == 1)
+        #expect(decodedIndex.entries[0].id == entry2.id)
+    }
+
+    @Test
+    func indexCache_FastPathSync_MatchingFolders() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create entries with the first store (writes index)
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry1 = store1.addEntry(
+            rawTranscript: "first",
+            polishedTranscript: "First",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+        let entry2 = store1.addEntry(
+            rawTranscript: "second",
+            polishedTranscript: "Second",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Create a second store — it should load from cache synchronously
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Entries should be populated immediately (synchronous load)
+        #expect(store2.entries.count == 2)
+        #expect(store2.entries[0].id == entry2.id)
+        #expect(store2.entries[1].id == entry1.id)
+    }
+
+    @Test
+    func indexCache_FallbackPath_CorruptIndex() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create an entry and a valid index
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry1 = store1.addEntry(
+            rawTranscript: "test",
+            polishedTranscript: "Test",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Corrupt the index file by overwriting with garbage
+        let corruptData = "this is not valid json".data(using: .utf8)!
+        try corruptData.write(to: store1.indexURL, options: .atomic)
+
+        // Create a second store — should fall back to async scan despite corrupted index
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        await store2.waitForPendingLoad()
+
+        // Should still load the entry correctly
+        #expect(store2.entries.count == 1)
+        #expect(store2.entries[0].id == entry1.id)
+
+        // A new valid index should have been written
+        let indexData = try Data(contentsOf: store2.indexURL)
+        let decoder = JSONDecoder()
+        let decodedIndex = try decoder.decode(HistoryIndex.self, from: indexData)
+        #expect(decodedIndex.entries.count == 1)
+    }
+
+    @Test
+    func indexCache_FastPath_StaleCacheFallsBack() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create an entry and a valid index
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry1 = store1.addEntry(
+            rawTranscript: "first",
+            polishedTranscript: "First",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Manually add a new folder on disk (simulating external addition)
+        let recordingsDir = store1.recordingsDir
+        let extraFolder = recordingsDir.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: extraFolder, withIntermediateDirectories: true)
+
+        // Add metadata.json with a new ID
+        let newId = UUID()
+        let metadataURL = extraFolder.appendingPathComponent("metadata.json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let metadata: [String: Any] = [
+            "id": newId.uuidString,
+            "timestamp": Date().timeIntervalSinceReferenceDate
+        ]
+        let metadataData = try JSONSerialization.data(withJSONObject: metadata)
+        try metadataData.write(to: metadataURL)
+
+        // Add raw.txt and polished.txt
+        try "extra raw".write(to: extraFolder.appendingPathComponent("raw.txt"), atomically: true, encoding: .utf8)
+        try "Extra Polished".write(to: extraFolder.appendingPathComponent("polished.txt"), atomically: true, encoding: .utf8)
+
+        // Create a second store — cache is now stale (2 folders on disk, 1 in cache)
+        // So it should fall back to async scan
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+        await store2.waitForPendingLoad()
+
+        // Should have loaded both entries
+        #expect(store2.entries.count == 2)
+    }
+
+    @Test
+    func waitForPendingLoad_IsSafeToCallWhenNoPendingLoad() async {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create a store — fast path, no pending load
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Should be safe to call waitForPendingLoad even though there's no pending task
+        await store.waitForPendingLoad()
+
+        #expect(store.entries.count == 0)
+    }
+
+    // MARK: - Finding 1: Merge Fix Tests
+
+    @Test
+    func asyncScan_MergesWithAddEntryDuringLoad() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Add initial entries
+        let store1 = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry1 = store1.addEntry(
+            rawTranscript: "initial entry",
+            polishedTranscript: "Initial Entry",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Delete the index to trigger async fallback scan
+        try? FileManager.default.removeItem(at: store1.indexURL)
+
+        // Create a new store that will kick off async scan
+        let store2 = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Immediately add a new entry BEFORE the async scan completes
+        let entry2 = store2.addEntry(
+            rawTranscript: "added during scan",
+            polishedTranscript: "Added During Scan",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Wait for the async scan to complete
+        await store2.waitForPendingLoad()
+
+        // Both entries should be present (merge worked, didn't overwrite with just scanned entries)
+        #expect(store2.entries.count == 2, "Both original and newly added entry should be present")
+        #expect(store2.entries.contains { $0.id == entry1.id }, "Original entry should be present")
+        #expect(store2.entries.contains { $0.id == entry2.id }, "Newly added entry should be present")
+
+        // Newest should be first
+        #expect(store2.entries[0].id == entry2.id, "Newly added entry should sort first")
+    }
+
+    // MARK: - Finding 2: Corrupt Folder Cache Stickiness Tests
+
+    @Test
+    func asyncScan_CorruptFolder_CacheBecomesSticky() async throws {
+        let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirLocal) }
+
+        // Create one valid entry
+        let store = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        let validEntry = store.addEntry(
+            rawTranscript: "valid",
+            polishedTranscript: "Valid",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Create a corrupted folder (missing metadata.json) to simulate an unparseable entry
+        let recordingsDir = tempDirLocal.appendingPathComponent("Recordings", isDirectory: true)
+        let corruptedFolder = recordingsDir.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: corruptedFolder, withIntermediateDirectories: true)
+        let rawURL = corruptedFolder.appendingPathComponent("raw.txt")
+        try "raw text".write(to: rawURL, atomically: true, encoding: .utf8)
+
+        // Delete index to force rebuild
+        try? FileManager.default.removeItem(at: store.indexURL)
+
+        // First load: scan finds valid entry and corrupted folder, creates index with both folder names
+        let store2 = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        await store2.waitForPendingLoad()
+        #expect(store2.entries.count == 1, "Should have loaded only the valid entry")
+        #expect(store2.entries[0].id == validEntry.id, "Should load the valid entry")
+
+        // Verify that the rebuilt index includes the corrupted folder name in folderNames
+        let indexData = try Data(contentsOf: store2.indexURL)
+        let decoder = JSONDecoder()
+        let index = try decoder.decode(HistoryIndex.self, from: indexData)
+        #expect(index.folderNames.count == 2, "Index should record both folder names (valid and corrupted)")
+        #expect(index.entries.count == 1, "Index should only have the valid entry")
+
+        // Second load: cache should now be valid and sticky (no rescan needed)
+        let store3 = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        // Note: no await, should load synchronously from cache
+        #expect(store3.entries.count == 1, "Second load should use cache synchronously")
+        #expect(store3.entries[0].id == validEntry.id, "Cached entry should be present")
     }
 }
