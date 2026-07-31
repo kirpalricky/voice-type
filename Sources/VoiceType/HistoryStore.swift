@@ -4,7 +4,7 @@ import Observation
 import OSLog
 
 /// A single past recording: its transcripts and (optionally) the saved audio file.
-struct HistoryEntry: Codable, Identifiable {
+struct HistoryEntry: Identifiable {
     let id: UUID
     let timestamp: Date
     let rawTranscript: String
@@ -34,10 +34,49 @@ struct HistoryEntry: Codable, Identifiable {
     }
 }
 
+extension HistoryEntry: Codable {
+    enum CodingKeys: String, CodingKey {
+        case id
+        case timestamp
+        case rawTranscript
+        case polishedTranscript
+        case audioFileName
+        case folderURL
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.timestamp = try container.decode(Date.self, forKey: .timestamp)
+        self.rawTranscript = try container.decode(String.self, forKey: .rawTranscript)
+        self.polishedTranscript = try container.decode(String.self, forKey: .polishedTranscript)
+        self.audioFileName = try container.decodeIfPresent(String.self, forKey: .audioFileName)
+        self.folderURL = try container.decode(URL.self, forKey: .folderURL)
+        self.searchHaystack = (self.rawTranscript + " " + self.polishedTranscript).lowercased()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(rawTranscript, forKey: .rawTranscript)
+        try container.encode(polishedTranscript, forKey: .polishedTranscript)
+        try container.encodeIfPresent(audioFileName, forKey: .audioFileName)
+        try container.encode(folderURL, forKey: .folderURL)
+    }
+}
+
 /// Minimal metadata stored alongside transcript files in each recording folder.
 private struct RecordingMetadata: Codable {
     let id: UUID
     let timestamp: Date
+}
+
+/// Envelope structure for the on-disk index cache, including both the cached entries
+/// and the set of folder names that were observed on disk during the scan that created this index.
+struct HistoryIndex: Codable {
+    let folderNames: [String]
+    let entries: [HistoryEntry]
 }
 
 /// Persists a rolling history of transcriptions and their source audio to
@@ -49,6 +88,7 @@ final class HistoryStore {
     @ObservationIgnored private let logger = OSLog(subsystem: "com.voicetype.history", category: "HistoryStore")
     @ObservationIgnored private let maxEntries = 100
     @ObservationIgnored private let baseDirectoryOverride: URL?
+    @ObservationIgnored private var pendingLoadTask: Task<Void, Never>?
 
     var entries: [HistoryEntry] = []
 
@@ -64,15 +104,145 @@ final class HistoryStore {
         baseDir.appendingPathComponent("Recordings", isDirectory: true)
     }
 
+    var indexURL: URL {
+        baseDir.appendingPathComponent("index.json")
+    }
+
     init(baseDirectoryOverride: URL? = nil) {
         self.baseDirectoryOverride = baseDirectoryOverride
         load()
     }
 
     func load() {
-        guard fileManager.fileExists(atPath: recordingsDir.path) else { return }
+        // Try fast path: check if index.json exists and is valid
+        if fileManager.fileExists(atPath: indexURL.path) {
+            do {
+                let indexData = try Data(contentsOf: indexURL)
+                let decoder = JSONDecoder()
+                let cachedIndex = try decoder.decode(HistoryIndex.self, from: indexData)
 
+                // Do shallow listing to check if folders match
+                guard fileManager.fileExists(atPath: recordingsDir.path) else {
+                    // No recordings dir, but we have a cache — this shouldn't happen in normal use
+                    // Fall through to fallback
+                    kickOffAsyncScan()
+                    return
+                }
+
+                do {
+                    let contents = try fileManager.contentsOfDirectory(at: recordingsDir, includingPropertiesForKeys: nil)
+                    var actualFolderNames: Set<String> = []
+                    for item in contents {
+                        var isDir: ObjCBool = false
+                        if fileManager.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
+                            actualFolderNames.insert(item.lastPathComponent)
+                        }
+                    }
+
+                    let cachedFolderNames = Set(cachedIndex.folderNames)
+
+                    if actualFolderNames == cachedFolderNames {
+                        // Fast path: cache is valid, use it synchronously
+                        entries = cachedIndex.entries
+                        os_log("Loaded %d history entries from cache", log: logger, type: .info, entries.count)
+                        return
+                    }
+                } catch {
+                    // Failed to list directory, fall through to fallback
+                    os_log("Failed to list recordings directory for cache validation: %@", log: logger, type: .debug, error.localizedDescription)
+                }
+            } catch {
+                // Failed to decode index, fall through to fallback
+                os_log("Failed to decode index cache: %@", log: logger, type: .debug, error.localizedDescription)
+            }
+        }
+
+        // Fallback: kick off async scan
+        kickOffAsyncScan()
+    }
+
+    /// Kick off an async scan of the Recordings directory.
+    /// NOTE: This method is not safe to call concurrently from multiple call sites without adding cancellation logic.
+    /// Currently safe because only init() calls load(), which calls this. If a future caller (e.g. a "refresh" button)
+    /// is added, ensure this method is protected against concurrent invocation or that the previous task is cancelled first.
+    private func kickOffAsyncScan() {
+        let recordingsDir = self.recordingsDir
+        let indexURL = self.indexURL
+
+        pendingLoadTask = Task.detached(priority: .userInitiated) {
+            // Before scanning, check if index.json now exists and is valid
+            // (it might have been created by addEntry while we were waiting to run)
+            if FileManager.default.fileExists(atPath: indexURL.path) {
+                do {
+                    let indexData = try Data(contentsOf: indexURL)
+                    let decoder = JSONDecoder()
+                    let cachedIndex = try decoder.decode(HistoryIndex.self, from: indexData)
+
+                    // Verify folder names match (fast path validation)
+                    if FileManager.default.fileExists(atPath: recordingsDir.path) {
+                        let contents = try FileManager.default.contentsOfDirectory(at: recordingsDir, includingPropertiesForKeys: nil)
+                        var actualFolderNames: Set<String> = []
+                        for item in contents {
+                            var isDir: ObjCBool = false
+                            if FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
+                                actualFolderNames.insert(item.lastPathComponent)
+                            }
+                        }
+
+                        let cachedFolderNames = Set(cachedIndex.folderNames)
+
+                        if actualFolderNames == cachedFolderNames {
+                            // Cache is valid, merge it with entries that may have been added during scan startup
+                            await MainActor.run {
+                                self.mergeAndPersistScanResults(cachedIndex.entries)
+                            }
+                            return
+                        }
+                    }
+                } catch {
+                    // Index exists but is invalid, fall through to scan
+                    let logger = OSLog(subsystem: "com.voicetype.history", category: "HistoryStore")
+                    os_log("Failed to validate index cache in async scan: %@", log: logger, type: .debug, error.localizedDescription)
+                }
+            }
+
+            // Index doesn't exist or is invalid, perform full scan
+            let (scanned, observedFolderNames) = Self.scanDirectory(recordingsDir, fileManager: FileManager.default, logger: OSLog(subsystem: "com.voicetype.history", category: "HistoryStore"))
+            await MainActor.run {
+                self.mergeAndPersistScanResults(scanned, observedFolderNames: observedFolderNames)
+            }
+        }
+    }
+
+    /// Merge scan results into current entries, avoiding data loss and deletion resurrection.
+    /// - Keeps self.entries as the base (entries that may have been added via addEntry/delete during the scan)
+    /// - Appends any entry from scanned results whose id is not already in self.entries AND whose folderURL still exists on disk
+    /// - Re-sorts with the standard comparator
+    /// - Writes the merged index to disk
+    private func mergeAndPersistScanResults(_ scanned: [HistoryEntry], observedFolderNames: [String]? = nil) {
+        var merged = entries
+        let existingIds = Set(entries.map { $0.id })
+
+        for entry in scanned {
+            if !existingIds.contains(entry.id) {
+                // Check that the folder still exists (prevents resurrecting deleted entries)
+                if fileManager.fileExists(atPath: entry.folderURL.path) {
+                    merged.append(entry)
+                }
+            }
+        }
+
+        // Re-sort with the standard comparator
+        merged.sort { ($0.timestamp, $0.id.uuidString) > ($1.timestamp, $1.id.uuidString) }
+        entries = merged
+        writeIndex(observedFolderNames: observedFolderNames)
+    }
+
+    nonisolated private static func scanDirectory(_ recordingsDir: URL, fileManager: FileManager, logger: OSLog) -> (entries: [HistoryEntry], folderNames: [String]) {
         var loadedEntries: [HistoryEntry] = []
+        var observedFolderNames: [String] = []
+
+        guard fileManager.fileExists(atPath: recordingsDir.path) else { return ([], []) }
 
         do {
             let contents = try fileManager.contentsOfDirectory(at: recordingsDir, includingPropertiesForKeys: nil)
@@ -83,6 +253,9 @@ final class HistoryStore {
                     // Skip non-directories (e.g., leftover flat .caf files from old format)
                     continue
                 }
+
+                let folderName = item.lastPathComponent
+                observedFolderNames.append(folderName)
 
                 let metadataURL = item.appendingPathComponent("metadata.json")
                 let rawTranscriptURL = item.appendingPathComponent("raw.txt")
@@ -119,18 +292,23 @@ final class HistoryStore {
                     )
                     loadedEntries.append(entry)
                 } catch {
-                    let folderName = item.lastPathComponent
                     os_log("Failed to load entry from %@: %@", log: logger, type: .debug, folderName, error.localizedDescription)
-                    // Skip this folder and continue
+                    // Skip this folder and continue (but keep the folder name recorded)
                 }
             }
 
             // Sort by timestamp descending, with UUID string as tie-breaker for consistent ordering
-            entries = loadedEntries.sorted { ($0.timestamp, $0.id.uuidString) > ($1.timestamp, $1.id.uuidString) }
-            os_log("Loaded %d history entries", log: logger, type: .info, entries.count)
+            loadedEntries.sort { ($0.timestamp, $0.id.uuidString) > ($1.timestamp, $1.id.uuidString) }
+            os_log("Loaded %d history entries from disk", log: logger, type: .info, loadedEntries.count)
         } catch {
-            os_log("Failed to load history: %@", log: logger, type: .error, error.localizedDescription)
+            os_log("Failed to scan directory: %@", log: logger, type: .error, error.localizedDescription)
         }
+
+        return (loadedEntries, observedFolderNames)
+    }
+
+    func waitForPendingLoad() async {
+        await pendingLoadTask?.value
     }
 
     /// Save a completed transcription (and its source audio) into history.
@@ -195,12 +373,14 @@ final class HistoryStore {
             entries = Array(entries.prefix(maxEntries))
         }
 
+        writeIndex()
         return entry
     }
 
     func delete(_ entry: HistoryEntry) {
         entries.removeAll { $0.id == entry.id }
         deleteFolder(for: entry)
+        writeIndex()
     }
 
     func audioURL(for entry: HistoryEntry) -> URL? {
@@ -211,6 +391,38 @@ final class HistoryStore {
 
     private func deleteFolder(for entry: HistoryEntry) {
         try? fileManager.removeItem(at: entry.folderURL)
+    }
+
+    private func writeIndex(observedFolderNames: [String]? = nil) {
+        do {
+            // If folder names weren't provided (e.g., called from addEntry or delete), do a fresh listing
+            let folderNames: [String]
+            if let provided = observedFolderNames {
+                folderNames = provided
+            } else {
+                var names: [String] = []
+                if fileManager.fileExists(atPath: recordingsDir.path) {
+                    let contents = try? fileManager.contentsOfDirectory(at: recordingsDir, includingPropertiesForKeys: nil)
+                    if let contents = contents {
+                        for item in contents {
+                            var isDir: ObjCBool = false
+                            if fileManager.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
+                                names.append(item.lastPathComponent)
+                            }
+                        }
+                    }
+                }
+                folderNames = names
+            }
+
+            let index = HistoryIndex(folderNames: folderNames, entries: entries)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let indexData = try encoder.encode(index)
+            try indexData.write(to: indexURL, options: .atomic)
+        } catch {
+            os_log("Failed to write index cache: %@", log: logger, type: .error, error.localizedDescription)
+        }
     }
 
     private static func writeAudio(samples: [Float], sampleRate: Double, to url: URL) throws {
