@@ -85,8 +85,8 @@ struct HistoryStoreTests {
         // Check that folder exists
         #expect(FileManager.default.fileExists(atPath: entryFolder.path))
 
-        // Check that audio.caf exists
-        let audioURL = entryFolder.appendingPathComponent("audio.caf")
+        // Check that audio.m4a exists
+        let audioURL = entryFolder.appendingPathComponent("audio.m4a")
         #expect(FileManager.default.fileExists(atPath: audioURL.path))
 
         // Check that raw.txt exists and has correct content
@@ -117,10 +117,10 @@ struct HistoryStoreTests {
             audioSamples: Self.createSampleAudio(),
             sampleRate: 48000
         )
-        #expect(entry.audioFileName == "audio.caf")
+        #expect(entry.audioFileName == "audio.m4a")
 
         // Verify file exists in the per-folder structure
-        let audioURL = store.recordingsDir.appendingPathComponent(entry.id.uuidString).appendingPathComponent("audio.caf")
+        let audioURL = store.recordingsDir.appendingPathComponent(entry.id.uuidString).appendingPathComponent("audio.m4a")
         #expect(FileManager.default.fileExists(atPath: audioURL.path))
     }
 
@@ -139,7 +139,7 @@ struct HistoryStoreTests {
         #expect(entry.audioFileName == nil)
 
         let entryFolder = store.recordingsDir.appendingPathComponent(entry.id.uuidString, isDirectory: true)
-        let audioURL = entryFolder.appendingPathComponent("audio.caf")
+        let audioURL = entryFolder.appendingPathComponent("audio.m4a")
         #expect(!FileManager.default.fileExists(atPath: audioURL.path))
 
         // But other files should exist
@@ -495,7 +495,7 @@ struct HistoryStoreTests {
         let url = store.audioURL(for: entry)
         #expect(url != nil)
         #expect(FileManager.default.fileExists(atPath: url?.path ?? ""))
-        #expect(url?.lastPathComponent == "audio.caf")
+        #expect(url?.lastPathComponent == "audio.m4a")
     }
 
     // MARK: - Sub-Second Precision & Tie-Breaking Tests
@@ -563,12 +563,12 @@ struct HistoryStoreTests {
         let rawURL = entryFolder.appendingPathComponent("raw.txt")
         let polishedURL = entryFolder.appendingPathComponent("polished.txt")
         let metadataURL = entryFolder.appendingPathComponent("metadata.json")
-        let audioURL = entryFolder.appendingPathComponent("audio.caf")
+        let audioURL = entryFolder.appendingPathComponent("audio.m4a")
 
         #expect(FileManager.default.fileExists(atPath: rawURL.path), "raw.txt should exist")
         #expect(FileManager.default.fileExists(atPath: polishedURL.path), "polished.txt should exist")
         #expect(FileManager.default.fileExists(atPath: metadataURL.path), "metadata.json should exist")
-        #expect(!FileManager.default.fileExists(atPath: audioURL.path), "audio.caf should not exist without audio samples")
+        #expect(!FileManager.default.fileExists(atPath: audioURL.path), "audio.m4a should not exist without audio samples")
     }
 
     @Test
@@ -635,5 +635,119 @@ struct HistoryStoreTests {
         // Reload to verify all 100 persisted
         let store2 = HistoryStore(baseDirectoryOverride: tempDir)
         #expect(store2.entries.count == 100)
+    }
+
+    @Test
+    func load_LegacyCAFFile_IsFoundAndUsable() throws {
+        let tempDirLocal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirLocal, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirLocal) }
+
+        // Create a legacy entry folder manually (simulating an entry saved before AAC conversion)
+        let legacyId = UUID()
+        let recordingsDir = tempDirLocal.appendingPathComponent("Recordings", isDirectory: true)
+        let legacyFolder = recordingsDir.appendingPathComponent(legacyId.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyFolder, withIntermediateDirectories: true)
+
+        // Create metadata.json with a simple structure that matches RecordingMetadata
+        // We use a Dictionary since RecordingMetadata is private to HistoryStore
+        let metadata: [String: Any] = [
+            "id": legacyId.uuidString,
+            "timestamp": Date().timeIntervalSinceReferenceDate
+        ]
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let metadataData = try JSONSerialization.data(withJSONObject: metadata)
+        let metadataURL = legacyFolder.appendingPathComponent("metadata.json")
+        try metadataData.write(to: metadataURL)
+
+        // Create raw.txt and polished.txt
+        let rawURL = legacyFolder.appendingPathComponent("raw.txt")
+        try "legacy raw transcript".write(to: rawURL, atomically: true, encoding: .utf8)
+        let polishedURL = legacyFolder.appendingPathComponent("polished.txt")
+        try "Legacy Polished Transcript".write(to: polishedURL, atomically: true, encoding: .utf8)
+
+        // Create a legacy audio.caf file (just dummy content for this test)
+        let cafURL = legacyFolder.appendingPathComponent("audio.caf")
+        try "fake audio data".write(to: cafURL, atomically: true, encoding: .utf8)
+
+        // Load the store and verify the legacy entry is found
+        let store = HistoryStore(baseDirectoryOverride: tempDirLocal)
+        #expect(store.entries.count == 1)
+        let loadedEntry = store.entries[0]
+
+        #expect(loadedEntry.id == legacyId)
+        #expect(loadedEntry.rawTranscript == "legacy raw transcript")
+        #expect(loadedEntry.polishedTranscript == "Legacy Polished Transcript")
+        #expect(loadedEntry.audioFileName == "audio.caf", "Legacy entry should report audio.caf as filename")
+
+        // Verify audioURL correctly returns the legacy .caf file
+        let audioURL = store.audioURL(for: loadedEntry)
+        #expect(audioURL != nil)
+        #expect(audioURL?.lastPathComponent == "audio.caf")
+        #expect(FileManager.default.fileExists(atPath: audioURL?.path ?? ""))
+    }
+
+    // MARK: - Audio Format & Round-Trip Tests
+
+    @Test
+    func addEntry_AudioRoundTrip_VerifiesAACEncoding() throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+
+        // Generate 48000 samples (3 seconds at 16kHz) with a varying sine wave signal
+        let sampleCount = 48000
+        let sampleRate: Double = 16000
+        let frequency: Float = 440.0  // A4 note
+        var audioSamples: [Float] = []
+        for i in 0..<sampleCount {
+            let phase = Float(i) * frequency / Float(sampleRate) * 2.0 * .pi
+            let sample = sin(phase) * 0.3  // 0.3 amplitude to avoid clipping
+            audioSamples.append(sample)
+        }
+
+        // Add entry with the audio samples
+        let entry = store.addEntry(
+            rawTranscript: "round trip test",
+            polishedTranscript: "Round Trip Test",
+            audioSamples: audioSamples,
+            sampleRate: sampleRate
+        )
+
+        #expect(entry.audioFileName == "audio.m4a")
+
+        // Get the audio URL
+        guard let audioURL = store.audioURL(for: entry) else {
+            #expect(Bool(false), "Audio URL should exist")
+            return
+        }
+
+        #expect(FileManager.default.fileExists(atPath: audioURL.path))
+
+        // Reopen the file and verify AAC encoding
+        let readFile = try AVAudioFile(forReading: audioURL)
+
+        // Verify the format is AAC
+        let formatID = readFile.fileFormat.streamDescription.pointee.mFormatID
+        #expect(formatID == kAudioFormatMPEG4AAC, "Audio file should be encoded as AAC (format ID: \(formatID) vs expected: \(kAudioFormatMPEG4AAC))")
+
+        // Verify the file length is reasonable (within tolerance for AAC frame boundaries)
+        // AAC frames can add some delay/padding; allow ±5000 frames tolerance
+        let fileLength = Int(readFile.length)
+        let expectedLength = sampleCount
+        let tolerance = 5000
+        #expect(fileLength >= expectedLength - tolerance && fileLength <= expectedLength + tolerance,
+               "File length (\(fileLength)) should be close to input samples (\(expectedLength)), within ±\(tolerance) tolerance")
+
+        // Verify file size is compressed (much smaller than raw PCM)
+        // Raw PCM would be sampleCount * 4 bytes (Float32) = 192,000 bytes
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: audioURL.path)
+        let fileSize = fileAttributes[.size] as? Int ?? 0
+        let rawPCMSize = sampleCount * 4  // Float32 = 4 bytes per sample
+        let compressionRatio = Double(fileSize) / Double(rawPCMSize)
+
+        #expect(fileSize > 0, "Audio file should have content")
+        #expect(compressionRatio < 0.5, "AAC compression should reduce file to less than 50% of raw PCM (\(fileSize) bytes vs \(rawPCMSize) raw)")
     }
 }

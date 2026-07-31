@@ -10,7 +10,7 @@ struct HistoryEntry: Codable, Identifiable {
     let rawTranscript: String
     let polishedTranscript: String
     /// Filename (not full path) inside the entry's folder, if the audio was saved successfully.
-    /// For the new per-folder layout, this is always "audio.caf" if present, or nil.
+    /// New entries use "audio.m4a" (AAC compressed); legacy entries may use "audio.caf" (PCM uncompressed).
     let audioFileName: String?
 
     init(id: UUID = UUID(), timestamp: Date = Date(), rawTranscript: String, polishedTranscript: String, audioFileName: String?) {
@@ -82,7 +82,6 @@ final class HistoryStore {
                 let metadataURL = item.appendingPathComponent("metadata.json")
                 let rawTranscriptURL = item.appendingPathComponent("raw.txt")
                 let polishedTranscriptURL = item.appendingPathComponent("polished.txt")
-                let audioURL = item.appendingPathComponent("audio.caf")
 
                 do {
                     let metadataData = try Data(contentsOf: metadataURL)
@@ -92,7 +91,17 @@ final class HistoryStore {
                     let rawTranscript = try String(contentsOf: rawTranscriptURL, encoding: .utf8)
                     let polishedTranscript = try String(contentsOf: polishedTranscriptURL, encoding: .utf8)
 
-                    let audioFileName = fileManager.fileExists(atPath: audioURL.path) ? "audio.caf" : nil
+                    // Check for m4a first (new format), then fall back to caf (legacy format)
+                    let m4aURL = item.appendingPathComponent("audio.m4a")
+                    let cafURL = item.appendingPathComponent("audio.caf")
+                    let audioFileName: String?
+                    if fileManager.fileExists(atPath: m4aURL.path) {
+                        audioFileName = "audio.m4a"
+                    } else if fileManager.fileExists(atPath: cafURL.path) {
+                        audioFileName = "audio.caf"
+                    } else {
+                        audioFileName = nil
+                    }
 
                     // Use folder's UUID, not metadata.id, as the authoritative entry ID
                     let entry = HistoryEntry(
@@ -133,9 +142,9 @@ final class HistoryStore {
             // Write audio if samples provided. Audio failures are logged but don't prevent transcript persistence.
             if !audioSamples.isEmpty {
                 do {
-                    let audioURL = entryFolder.appendingPathComponent("audio.caf")
+                    let audioURL = entryFolder.appendingPathComponent("audio.m4a")
                     try Self.writeAudio(samples: audioSamples, sampleRate: sampleRate, to: audioURL)
-                    audioFileName = "audio.caf"
+                    audioFileName = "audio.m4a"
                 } catch {
                     os_log("Failed to save recording audio: %@", log: logger, type: .debug, error.localizedDescription)
                 }
@@ -187,8 +196,8 @@ final class HistoryStore {
     }
 
     func audioURL(for entry: HistoryEntry) -> URL? {
-        guard entry.audioFileName != nil else { return nil }
-        let url = recordingsDir.appendingPathComponent(entry.id.uuidString).appendingPathComponent("audio.caf")
+        guard let audioFileName = entry.audioFileName else { return nil }
+        let url = recordingsDir.appendingPathComponent(entry.id.uuidString).appendingPathComponent(audioFileName)
         return fileManager.fileExists(atPath: url.path) ? url : nil
     }
 
@@ -198,11 +207,14 @@ final class HistoryStore {
     }
 
     private static func writeAudio(samples: [Float], sampleRate: Double, to url: URL) throws {
-        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false) else {
-            throw HistoryStoreError.audioFormatUnavailable
-        }
-        let file = try AVAudioFile(forWriting: url, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else {
+        let outputSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 32000
+        ]
+        let file = try AVAudioFile(forWriting: url, settings: outputSettings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(samples.count)) else {
             throw HistoryStoreError.audioFormatUnavailable
         }
         buffer.frameLength = buffer.frameCapacity
