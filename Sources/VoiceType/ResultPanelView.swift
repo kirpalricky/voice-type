@@ -97,7 +97,7 @@ struct ResultPanelView: View {
                     .background(Capsule().fill(.quaternary.opacity(0.6)))
             }
 
-            levelMeter(tint: .red)
+            levelMeter(tint: .primary)
                 .frame(maxHeight: .infinity)
 
             HStack {
@@ -105,28 +105,28 @@ struct ResultPanelView: View {
                 Button(action: onStopRecording) {
                     Label("Stop", systemImage: "stop.fill")
                 }
-                .buttonStyle(FilledButtonStyle(tint: .red, fullWidth: false))
+                .buttonStyle(FilledButtonStyle(fullWidth: false))
                 Spacer()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Solid red dot with a radar-style ping ring — a calmer, more intentional "live" cue
+    /// Solid black/white dot with a radar-style ping ring — a calmer, more intentional "live" cue
     /// than a hard blink.
     private var recordingIndicator: some View {
         ZStack {
             Circle()
-                .stroke(Color.red, lineWidth: 1.5)
+                .stroke(Color.primary, lineWidth: 1.5)
                 .frame(width: 10, height: 10)
                 .scaleEffect(isPinging ? 2.2 : 1)
                 .opacity(isPinging ? 0 : 0.7)
                 .animation(.easeOut(duration: 1.4).repeatForever(autoreverses: false), value: isPinging)
 
             Circle()
-                .fill(Color.red)
+                .fill(Color.primary)
                 .frame(width: 10, height: 10)
-                .shadow(color: .red.opacity(0.6), radius: 3)
+                .shadow(color: .primary.opacity(0.35), radius: 3)
         }
         .frame(width: 24, height: 24)
         .onAppear { isPinging = true }
@@ -281,7 +281,7 @@ struct ResultPanelView: View {
                 Button(action: copyToClipboard) {
                     Label("Copy", systemImage: "doc.on.doc")
                 }
-                .buttonStyle(FilledButtonStyle(tint: .accentColor, fullWidth: true))
+                .buttonStyle(FilledButtonStyle(fullWidth: true))
 
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
@@ -368,26 +368,48 @@ struct ResultPanelView: View {
 
 // MARK: - Button styles
 
-/// Solid, tinted, product-grade primary action. Uses the tint's gradient for a subtle
-/// dimensional sheen and a gentle press response.
+/// Solid, monochromatic primary action with hover and press feedback.
 private struct FilledButtonStyle: ButtonStyle {
-    var tint: Color = .accentColor
     var fullWidth: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        FilledButtonLabel(
+            label: configuration.label,
+            isPressed: configuration.isPressed,
+            fullWidth: fullWidth
+        )
+    }
+}
+
+/// Inner view to hold hover state, which can't be stored directly in ButtonStyle.
+private struct FilledButtonLabel<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+    let fullWidth: Bool
+
+    @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        label
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.vertical, 8)
             .padding(.horizontal, 16)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(tint.gradient)
+                    .fill(Color.primary)
             )
-            .opacity(configuration.isPressed ? 0.85 : 1)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(
+                isPressed ? 0.85 : (isHovered ? 0.92 : 1.0)
+            )
+            .scaleEffect(isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.12), value: isPressed)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .onHover { hovering in
+                isHovered = hovering
+            }
     }
 }
 
@@ -395,31 +417,75 @@ private struct FilledButtonStyle: ButtonStyle {
 /// tappable without competing with the primary action.
 private struct QuietIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        QuietIconButtonLabel(
+            label: configuration.label,
+            isPressed: configuration.isPressed
+        )
+    }
+}
+
+/// Inner view to hold hover state for QuietIconButtonStyle.
+private struct QuietIconButtonLabel<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+
+    @State private var isHovered = false
+
+    var body: some View {
+        label
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
             .frame(width: 34, height: 34)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(.quaternary.opacity(configuration.isPressed ? 0.9 : 0.45))
+                    .fill(.quaternary.opacity(
+                        isPressed ? 0.9 : (isHovered ? 0.6 : 0.45)
+                    ))
             )
             .contentShape(Rectangle())
-            .opacity(configuration.isPressed ? 0.8 : 1)
+            .opacity(isPressed ? 0.8 : 1)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .animation(.easeOut(duration: 0.12), value: isPressed)
+            .onHover { hovering in
+                isHovered = hovering
+            }
     }
 }
 
 /// Low-emphasis text button (Cancel / Dismiss on the centered states).
 private struct GhostButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        GhostButtonLabel(
+            label: configuration.label,
+            isPressed: configuration.isPressed
+        )
+    }
+}
+
+/// Inner view to hold hover state for GhostButtonStyle.
+private struct GhostButtonLabel<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+
+    @State private var isHovered = false
+
+    var body: some View {
+        label
             .font(.subheadline.weight(.medium))
             .foregroundStyle(.secondary)
             .padding(.vertical, 6)
             .padding(.horizontal, 18)
             .background(
-                Capsule().fill(.quaternary.opacity(configuration.isPressed ? 0.8 : 0.45))
+                Capsule().fill(.quaternary.opacity(
+                    isPressed ? 0.8 : (isHovered ? 0.6 : 0.45)
+                ))
             )
             .contentShape(Capsule())
-            .opacity(configuration.isPressed ? 0.8 : 1)
+            .opacity(isPressed ? 0.8 : 1)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .animation(.easeOut(duration: 0.12), value: isPressed)
+            .onHover { hovering in
+                isHovered = hovering
+            }
     }
 }
