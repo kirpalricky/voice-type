@@ -205,7 +205,7 @@ struct YapboardMenuView: View {
     @State private var historyRowHovering = false
     @State private var settingsRowHovering = false
     @State private var quitRowHovering = false
-    @State private var versionRowHovering = false
+    @State private var updatesRowHovering = false
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
@@ -304,12 +304,15 @@ struct YapboardMenuView: View {
                 settingsRowHovering = hovering
             }
 
-            // Check for Updates button
+            // Check for Updates button (version shown as trailing secondary text)
             Button(action: { updaterViewModel.checkForUpdates() }) {
                 HStack {
                     Text("Check for Updates…")
                         .font(.system(size: 13))
                     Spacer()
+                    Text("\(appVersion) (\(appBuild))")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                 }
                 .contentShape(Rectangle())
             }
@@ -318,7 +321,10 @@ struct YapboardMenuView: View {
             .opacity(updaterViewModel.canCheckForUpdates ? 1.0 : 0.5)
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
-            .background(Color.clear)
+            .background(updatesRowHovering ? Color.gray.opacity(0.15) : Color.clear)
+            .onHover { hovering in
+                updatesRowHovering = hovering
+            }
 
             Divider()
 
@@ -334,24 +340,6 @@ struct YapboardMenuView: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 12)
-
-            // Version button
-            Button(action: onShowAbout) {
-                HStack {
-                    Text("Version \(appVersion) (\(appBuild))")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 12)
-            .background(versionRowHovering ? Color.gray.opacity(0.15) : Color.clear)
-            .onHover { hovering in
-                versionRowHovering = hovering
-            }
 
             Divider()
 
