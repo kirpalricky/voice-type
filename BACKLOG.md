@@ -10,14 +10,7 @@
    the app has a real distribution path (GitHub Releases + Homebrew)
    beyond just the dev machine.
 
-2. **No automated dependency vulnerability scanning.** `Package.resolved`
-   pins exact revisions for `FluidAudio`, `KeyboardShortcuts`, and
-   `Sparkle`, but nothing (e.g. Dependabot/Renovate) flags known
-   advisories against them. Low effort to add (a `.github/dependabot.yml`
-   for the Swift package ecosystem) once GitHub's SPM support for it is
-   confirmed adequate.
-
-3. **Sparkle appcast only ever holds one `<item>`.**
+2. **Sparkle appcast only ever holds one `<item>`.**
    [scripts/release.sh](scripts/release.sh) does `rm -rf "$RELEASE_DIR"`
    before every run, so `generate_appcast` only ever sees the single zip
    just built — no version history, no delta updates, and no persisted
@@ -27,6 +20,13 @@
    `release/` each time).
 
 ## Done
+
+- Added automated dependency vulnerability scanning via
+  [.github/dependabot.yml](.github/dependabot.yml). Confirmed GitHub's
+  `swift` package-ecosystem support covers `Package.resolved` (pins for
+  `FluidAudio`, `KeyboardShortcuts`, `Sparkle`) — weekly update checks,
+  plus a second `github-actions` entry to keep `ci.yml`'s action versions
+  patched too.
 
 - Cut the first real release (v1.2.0) and fixed the Homebrew cask's
   `sha256 :no_check` placeholder with the real digest
