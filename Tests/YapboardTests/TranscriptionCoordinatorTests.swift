@@ -675,4 +675,80 @@ struct TranscriptionCoordinatorTests {
         #expect(appState.processingError == nil)
         #expect(appState.showingResultPanel == false)
     }
+
+    // MARK: - TranscriptionPipeline Tests
+
+    @Test("TranscriptionPipeline composes transcribe, vocab match, and polish")
+    func transcriptionPipeline_ComposesThreeSteps() async throws {
+        let audioSamples: [Float] = [0.1, 0.2, 0.3]
+
+        let transcriber = FakeTranscriber()
+        transcriber.transcribeResult = "hello world"
+
+        let polisher = FakePolisher()
+        polisher.polishResult = "Hello World."
+
+        let glossaryEntry = GlossaryEntry(canonical: "hello", variants: ["helo", "hallo"])
+        let glossary = [glossaryEntry]
+
+        let result = try await TranscriptionPipeline.run(
+            audioSamples: audioSamples,
+            transcriber: transcriber,
+            polisher: polisher,
+            glossary: glossary
+        )
+
+        #expect(transcriber.transcribeCallCount == 1)
+        #expect(polisher.polishCallCount == 1)
+        #expect(result.rawTranscript == "hello world")
+        #expect(result.polishedTranscript == "Hello World.")
+    }
+
+    @Test("TranscriptionPipeline propagates transcriber error")
+    func transcriptionPipeline_PropagatesTranscriberError() async throws {
+        let audioSamples: [Float] = [0.1, 0.2, 0.3]
+
+        let transcriber = FakeTranscriber()
+        transcriber.transcribeError = TestError.transcriptionFailed
+
+        let polisher = FakePolisher()
+        let glossary: [GlossaryEntry] = []
+
+        do {
+            try await TranscriptionPipeline.run(
+                audioSamples: audioSamples,
+                transcriber: transcriber,
+                polisher: polisher,
+                glossary: glossary
+            )
+            #expect(Bool(false), "Should have thrown transcriptionFailed")
+        } catch let error as TestError {
+            #expect(error == .transcriptionFailed)
+        }
+    }
+
+    @Test("TranscriptionPipeline propagates polisher error")
+    func transcriptionPipeline_PropagatesPolisherError() async throws {
+        let audioSamples: [Float] = [0.1, 0.2, 0.3]
+
+        let transcriber = FakeTranscriber()
+        transcriber.transcribeResult = "hello world"
+
+        let polisher = FakePolisher()
+        polisher.polishError = TestError.polishingFailed
+
+        let glossary: [GlossaryEntry] = []
+
+        do {
+            try await TranscriptionPipeline.run(
+                audioSamples: audioSamples,
+                transcriber: transcriber,
+                polisher: polisher,
+                glossary: glossary
+            )
+            #expect(Bool(false), "Should have thrown polishingFailed")
+        } catch let error as TestError {
+            #expect(error == .polishingFailed)
+        }
+    }
 }

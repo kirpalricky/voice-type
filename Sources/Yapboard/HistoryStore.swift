@@ -438,6 +438,45 @@ final class HistoryStore {
         writeIndex()
     }
 
+    /// Updates an existing entry's raw and polished transcripts, leaving audio, metadata, id, timestamp,
+    /// and folderURL unchanged. Splices the updated entry at its current position in the array.
+    /// - Throws on file write failure (unlike addEntry's best-effort audio write).
+    /// - Throws entryNoLongerExists if the entry was deleted while reprocessing (prevents resurrecting
+    ///   deleted entries by not inserting/appending back).
+    /// - Calls writeIndex() after successful update.
+    @discardableResult
+    func updateEntry(_ entry: HistoryEntry, rawTranscript: String, polishedTranscript: String) throws -> HistoryEntry {
+        // Check if entry still exists in the array BEFORE attempting writes
+        guard let currentIndex = entries.firstIndex(where: { $0.id == entry.id }) else {
+            // Entry was deleted or pruned while reprocessing — don't resurrect it
+            throw HistoryStoreError.entryNoLongerExists
+        }
+
+        // Write raw transcript
+        let rawURL = entry.folderURL.appendingPathComponent("raw.txt")
+        try rawTranscript.write(to: rawURL, atomically: true, encoding: .utf8)
+
+        // Write polished transcript
+        let polishedURL = entry.folderURL.appendingPathComponent("polished.txt")
+        try polishedTranscript.write(to: polishedURL, atomically: true, encoding: .utf8)
+
+        // Create updated entry with new transcripts, keeping everything else unchanged
+        let updatedEntry = HistoryEntry(
+            id: entry.id,
+            timestamp: entry.timestamp,
+            rawTranscript: rawTranscript,
+            polishedTranscript: polishedTranscript,
+            audioFileName: entry.audioFileName,
+            folderURL: entry.folderURL
+        )
+
+        // Splice the updated entry at its current position
+        entries[currentIndex] = updatedEntry
+        writeIndex()
+
+        return updatedEntry
+    }
+
     func audioURL(for entry: HistoryEntry) -> URL? {
         guard let audioFileName = entry.audioFileName else { return nil }
         let url = entry.folderURL.appendingPathComponent(audioFileName)
@@ -526,11 +565,14 @@ final class HistoryStore {
 
 enum HistoryStoreError: LocalizedError {
     case audioFormatUnavailable
+    case entryNoLongerExists
 
     var errorDescription: String? {
         switch self {
         case .audioFormatUnavailable:
             return "Could not create audio format for saving recording"
+        case .entryNoLongerExists:
+            return "Entry no longer exists in history"
         }
     }
 }

@@ -154,42 +154,27 @@ final class TranscriptionCoordinator {
             }
             try Task.checkCancellation()
 
-            // Transcribe audio
+            // Run transcription pipeline
             appState.statusMessage = "Transcribing…"
-            let rawTranscript = try await cancellable { [transcriber] in
-                try await transcriber.transcribe(audioSamples)
-            }
-            try Task.checkCancellation()
-            appState.rawTranscript = rawTranscript
-
             let glossaryEntries = glossaryStore.entries
-
-            // Layer 1: Apply exact match (case-insensitive, phrase-aware)
-            let afterExactMatch = VocabularyMatcher.applyExactMatch(rawTranscript, glossary: glossaryEntries)
-
-            // Layer 2: Apply fuzzy match (with dictionary gate and length-aware threshold)
-            let afterFuzzyMatch = VocabularyMatcher.applyFuzzyMatch(afterExactMatch, glossary: glossaryEntries)
-
-            // Layer 3: Polish transcript using on-device Foundation Models with glossary hints
-            let glossaryStrings = glossaryEntries.map { entry in
-                if entry.variants.isEmpty {
-                    return entry.canonical
-                } else {
-                    return "\(entry.canonical) (also heard as: \(entry.variants.joined(separator: ", ")))"
-                }
-            }
-            appState.statusMessage = "Polishing transcript…"
-            let polishedTranscript = try await cancellable { [self] in
-                try await self.polisher.polish(afterFuzzyMatch, glossary: glossaryStrings)
+            let pipelineResult = try await cancellable { [transcriber, polisher] in
+                try await TranscriptionPipeline.run(
+                    audioSamples: audioSamples,
+                    transcriber: transcriber,
+                    polisher: polisher,
+                    glossary: glossaryEntries
+                )
             }
             try Task.checkCancellation()
-            appState.polishedTranscript = polishedTranscript
 
-            os_log("Transcription pipeline complete: %d chars raw, %d chars after exact, %d chars after fuzzy, %d chars polished", log: self.logger, type: .info, rawTranscript.count, afterExactMatch.count, afterFuzzyMatch.count, polishedTranscript.count)
+            appState.rawTranscript = pipelineResult.rawTranscript
+            appState.polishedTranscript = pipelineResult.polishedTranscript
+
+            os_log("Transcription pipeline complete: %d chars raw, %d chars polished", log: self.logger, type: .info, pipelineResult.rawTranscript.count, pipelineResult.polishedTranscript.count)
 
             historyStore.addEntry(
-                rawTranscript: rawTranscript,
-                polishedTranscript: polishedTranscript,
+                rawTranscript: pipelineResult.rawTranscript,
+                polishedTranscript: pipelineResult.polishedTranscript,
                 audioSamples: audioSamples,
                 sampleRate: 16000
             )

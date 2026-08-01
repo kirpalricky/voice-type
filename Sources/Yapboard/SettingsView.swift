@@ -33,11 +33,13 @@ struct SettingsView: View {
     @State private var selectedSection: SettingsSection
     var glossaryStore: GlossaryStore
     var historyStore: HistoryStore
+    var historyReprocessor: HistoryReprocessor
     var updaterViewModel: UpdaterViewModel
 
-    init(glossaryStore: GlossaryStore, historyStore: HistoryStore, updaterViewModel: UpdaterViewModel, initialSection: SettingsSection = .general) {
+    init(glossaryStore: GlossaryStore, historyStore: HistoryStore, historyReprocessor: HistoryReprocessor, updaterViewModel: UpdaterViewModel, initialSection: SettingsSection = .general) {
         self.glossaryStore = glossaryStore
         self.historyStore = historyStore
+        self.historyReprocessor = historyReprocessor
         self.updaterViewModel = updaterViewModel
         self._selectedSection = State(initialValue: initialSection)
     }
@@ -57,7 +59,7 @@ struct SettingsView: View {
                 case .vocabulary:
                     VocabularySettingsTab(glossaryStore: glossaryStore)
                 case .history:
-                    HistorySettingsTab(historyStore: historyStore)
+                    HistorySettingsTab(historyStore: historyStore, historyReprocessor: historyReprocessor)
                 case .about:
                     AboutSettingsTab(updaterViewModel: updaterViewModel)
                 }
@@ -342,12 +344,15 @@ struct VocabularySettingsTab: View {
 
 struct HistorySettingsTab: View {
     var historyStore: HistoryStore
+    var historyReprocessor: HistoryReprocessor
 
     @State private var selectedEntryID: UUID?
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
     @State private var searchDebounceTask: Task<Void, Never>?
     @State private var showingRawInDetail = false
+    @State private var reprocessingEntryID: UUID?
+    @State private var reprocessError: String?
 
     var filteredEntries: [HistoryEntry] {
         if debouncedSearchText.isEmpty {
@@ -361,6 +366,30 @@ struct HistorySettingsTab: View {
     // selected entry doesn't vanish/re-resolve incorrectly while the search filter is in flux.
     var selectedEntry: HistoryEntry? {
         historyStore.entries.first { $0.id == selectedEntryID }
+    }
+
+    private func startReprocess(_ entry: HistoryEntry) {
+        // No-op if already reprocessing
+        guard reprocessingEntryID == nil else { return }
+
+        reprocessingEntryID = entry.id
+        reprocessError = nil
+
+        Task {
+            do {
+                _ = try await historyReprocessor.reprocess(entry)
+                // Success - clear the reprocessing ID
+                await MainActor.run {
+                    reprocessingEntryID = nil
+                }
+            } catch {
+                // Error - show alert
+                await MainActor.run {
+                    reprocessingEntryID = nil
+                    reprocessError = error.localizedDescription
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -406,7 +435,13 @@ struct HistorySettingsTab: View {
 
                         List(selection: $selectedEntryID) {
                             ForEach(filteredEntries) { entry in
-                                HistoryRow(entry: entry, historyStore: historyStore)
+                                HistoryRow(
+                                    entry: entry,
+                                    historyStore: historyStore,
+                                    historyReprocessor: historyReprocessor,
+                                    isReprocessing: reprocessingEntryID == entry.id,
+                                    onReprocess: { startReprocess(entry) }
+                                )
                                     .tag(entry.id)
                             }
                         }
@@ -486,12 +521,27 @@ struct HistorySettingsTab: View {
                 }
             }
         }
+        .alert("Reprocessing Failed", isPresented: Binding(
+            get: { reprocessError != nil },
+            set: { if !$0 { reprocessError = nil } }
+        )) {
+            Button("OK") {
+                reprocessError = nil
+            }
+        } message: {
+            if let error = reprocessError {
+                Text(error)
+            }
+        }
     }
 }
 
 private struct HistoryRow: View {
     let entry: HistoryEntry
     var historyStore: HistoryStore
+    var historyReprocessor: HistoryReprocessor
+    var isReprocessing: Bool = false
+    var onReprocess: () -> Void = {}
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -532,6 +582,14 @@ private struct HistoryRow: View {
                     }
                     .buttonStyle(.plain)
                     .help("Reveal audio in Finder")
+
+                    Button(action: onReprocess) {
+                        if isReprocessing { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "arrow.clockwise") }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isReprocessing)
+                    .help("Reprocess from saved audio")
                 }
 
                 Button(action: { historyStore.delete(entry) }) {
@@ -539,6 +597,7 @@ private struct HistoryRow: View {
                         .foregroundColor(.red)
                 }
                 .buttonStyle(.plain)
+                .disabled(isReprocessing)
                 .help("Delete entry")
             }
         }

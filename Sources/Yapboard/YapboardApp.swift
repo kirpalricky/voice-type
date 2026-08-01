@@ -164,7 +164,20 @@ struct YapboardApp: App {
 
     private func openSettings(section: SettingsSection = .general) {
         if settingsWindow == nil {
-            let settingsView = SettingsView(glossaryStore: glossaryStore, historyStore: historyStore, updaterViewModel: updaterViewModel, initialSection: section)
+            let historyReprocessor = HistoryReprocessor(
+                historyStore: historyStore,
+                appState: appState,
+                transcriber: transcriber,
+                polisher: FoundationModelsPolisher(),
+                glossaryStore: glossaryStore
+            )
+            let settingsView = SettingsView(
+                glossaryStore: glossaryStore,
+                historyStore: historyStore,
+                historyReprocessor: historyReprocessor,
+                updaterViewModel: updaterViewModel,
+                initialSection: section
+            )
             let hostingController = NSHostingController(rootView: settingsView)
             let window = NSWindow(contentViewController: hostingController)
             window.title = "Yapboard Settings"

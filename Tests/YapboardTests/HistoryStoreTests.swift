@@ -460,6 +460,126 @@ struct HistoryStoreTests {
         #expect(store.entries.contains { $0.id == entry3.id })
     }
 
+    // MARK: - updateEntry Tests
+
+    @Test
+    func updateEntry_PreservesFolderAndID() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry = store.addEntry(
+            rawTranscript: "original raw",
+            polishedTranscript: "Original Polished",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        let originalID = entry.id
+        let originalFolder = entry.folderURL
+
+        // Update the entry
+        let updated = try! store.updateEntry(entry, rawTranscript: "new raw", polishedTranscript: "New Polished")
+
+        // ID and folder should be unchanged
+        #expect(updated.id == originalID)
+        #expect(updated.folderURL == originalFolder)
+        #expect(updated.audioFileName == entry.audioFileName)
+        #expect(updated.timestamp == entry.timestamp)
+
+        // Transcripts should be updated
+        #expect(updated.rawTranscript == "new raw")
+        #expect(updated.polishedTranscript == "New Polished")
+    }
+
+    @Test
+    func updateEntry_PreservesArrayPosition() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry1 = store.addEntry(
+            rawTranscript: "first",
+            polishedTranscript: "First",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+        let entry2 = store.addEntry(
+            rawTranscript: "second",
+            polishedTranscript: "Second",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+        let entry3 = store.addEntry(
+            rawTranscript: "third",
+            polishedTranscript: "Third",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Initial order should be entry3, entry2, entry1 (newest first)
+        #expect(store.entries[0].id == entry3.id)
+        #expect(store.entries[1].id == entry2.id)
+        #expect(store.entries[2].id == entry1.id)
+
+        // Update entry2 (at index 1)
+        let updated = try! store.updateEntry(entry2, rawTranscript: "updated second", polishedTranscript: "Updated Second")
+
+        // Entry2 should still be at index 1, not moved to front
+        #expect(store.entries[1].id == entry2.id)
+        #expect(store.entries[1].rawTranscript == "updated second")
+        #expect(store.entries[0].id == entry3.id) // entry3 still at front
+        #expect(store.entries[2].id == entry1.id) // entry1 still at end
+    }
+
+    @Test
+    func updateEntry_PersistsToIndexAndSurvivesReload() async {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry = store.addEntry(
+            rawTranscript: "original",
+            polishedTranscript: "Original",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Update the entry
+        try! store.updateEntry(entry, rawTranscript: "updated raw", polishedTranscript: "Updated Polished")
+
+        // Verify updated entry is in entries
+        #expect(store.entries[0].rawTranscript == "updated raw")
+        #expect(store.entries[0].polishedTranscript == "Updated Polished")
+
+        // Create a new store to verify persistence
+        let newStore = HistoryStore(baseDirectoryOverride: tempDir)
+        await newStore.waitForPendingLoad()
+
+        #expect(newStore.entries.count == 1)
+        #expect(newStore.entries[0].rawTranscript == "updated raw")
+        #expect(newStore.entries[0].polishedTranscript == "Updated Polished")
+        #expect(newStore.entries[0].id == entry.id)
+    }
+
+    @Test
+    func updateEntry_ThrowsWhenEntryDeleted() {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = HistoryStore(baseDirectoryOverride: tempDir)
+        let entry = store.addEntry(
+            rawTranscript: "to be deleted",
+            polishedTranscript: "To Be Deleted",
+            audioSamples: Self.createSampleAudio(),
+            sampleRate: 48000
+        )
+
+        // Delete the entry
+        store.delete(entry)
+
+        // Attempting to update should throw entryNoLongerExists
+        #expect(throws: HistoryStoreError.entryNoLongerExists) {
+            try store.updateEntry(entry, rawTranscript: "new", polishedTranscript: "New")
+        }
+    }
+
     // MARK: - Load Tests
 
     @Test
