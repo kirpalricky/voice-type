@@ -84,28 +84,37 @@ final class ErrorReporter: @unchecked Sendable {
     /// Flushes accumulated errors as a synthetic Sentry event and clears the tally.
     /// Only sends if Sentry is configured and consent is not .disabled.
     /// Sends to SentryConfig.errorsHub if available, otherwise uses SentrySDK.
+    /// After sending, calls synchronous flush(timeout:) to ensure delivery before app exit.
     func flush() {
+        // Read and clear tally while holding lock; determine which hub to use.
         lock.lock()
-        defer { lock.unlock() }
 
         guard !tally.isEmpty else {
+            lock.unlock()
             return
         }
 
         // Skip if Sentry is not configured or if consent was explicitly disabled.
         guard SentryConfig.isConfigured, CrashReportingConsentManager.shared.state != .disabled else {
             tally.removeAll()
+            lock.unlock()
             return
         }
 
+        let tallySnapshot = tally
+        let useErrorsHub = SentryConfig.errorsHub != nil
+        tally.removeAll()
+        lock.unlock()
+        // Lock is now released; event building and flush happen below outside the critical section.
+
         // Build synthetic event.
         let event = Sentry.Event(level: .info)
-        let eventMessage = "Batched error report (\(tally.count) unique errors this session)"
+        let eventMessage = "Batched error report (\(tallySnapshot.count) unique errors this session)"
         event.message = SentryMessage(formatted: eventMessage)
 
         // Serialize tally into extra dictionary.
         var tallyDict: [String: [String: Any]] = [:]
-        for (key, value) in tally {
+        for (key, value) in tallySnapshot {
             let keyString = "\(key.domain):\(key.code)@\(key.site)"
             tallyDict[keyString] = [
                 "count": value.count,
@@ -123,12 +132,13 @@ final class ErrorReporter: @unchecked Sendable {
         }
 
         // Send via errors hub if available, otherwise try SDK (which may not be enabled).
-        if let errorsHub = SentryConfig.errorsHub {
+        // After capturing, flush synchronously to ensure the event is sent before the app exits.
+        if useErrorsHub, let errorsHub = SentryConfig.errorsHub {
             errorsHub.capture(event: event)
+            errorsHub.flush(timeout: 5.0)
         } else if SentrySDK.isEnabled {
             SentrySDK.capture(event: event)
+            SentrySDK.flush(timeout: 5.0)
         }
-
-        tally.removeAll()
     }
 }
