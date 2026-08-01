@@ -28,9 +28,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        ErrorReporter.shared.flush()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard ErrorReporter.shared.hasPendingTally else {
+            return .terminateNow
+        }
 
+        DispatchQueue.global(qos: .utility).async {
+            ErrorReporter.shared.flush()
+            DispatchQueue.main.async {
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
         // Clean up observer
         if let observer = consentNotificationObserver {
             NotificationCenter.default.removeObserver(observer)

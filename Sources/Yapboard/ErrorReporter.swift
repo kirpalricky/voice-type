@@ -81,6 +81,13 @@ final class ErrorReporter: @unchecked Sendable {
         tally.removeAll()
     }
 
+    /// Whether there are tallied errors waiting to be flushed. Thread-safe.
+    var hasPendingTally: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !tally.isEmpty
+    }
+
     /// Flushes accumulated errors as a synthetic Sentry event and clears the tally.
     /// Only sends if Sentry is configured and consent is not .disabled.
     /// Sends to SentryConfig.errorsHub if available, otherwise uses SentrySDK.
