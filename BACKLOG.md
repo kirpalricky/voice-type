@@ -20,6 +20,50 @@
     improvement onto past recordings, but best done once the polishing
     pipeline (currently under active iteration) settles down.
 
+2. **Homebrew cask ships with `sha256 :no_check`.**
+   ([Casks/voicetype.rb](https://github.com/kirpalricky/homebrew-voicetype/blob/main/Casks/voicetype.rb)
+   in the tap repo) — placeholder until the first real release exists to
+   hash. After running `scripts/release.sh` for the first time, compute
+   `shasum -a 256` on the published zip, replace `:no_check` with the real
+   digest, and push to the tap. Blocks nothing today (no release has been
+   cut yet) but must happen before the first `brew install` — `:no_check`
+   permanently disables integrity verification if left in place.
+
+3. **No CI-driven release pipeline; `scripts/release.sh` only runs
+   locally.** `.github/workflows/ci.yml` still only does `swift build` /
+   `swift test` on push/PR — nothing runs `scripts/release.sh`, so cutting
+   a release is entirely manual on one machine. Also no lint/static
+   analysis gate (e.g. SwiftLint) in CI. Consider a manually-triggered
+   `workflow_dispatch` job that runs `scripts/release.sh` (would need the
+   ad-hoc signing identity and `gh` auth as repo secrets — the Sparkle
+   private key in particular should probably stay local-only rather than
+   living in CI secrets, given it's irreplaceable once installed users
+   depend on it).
+
+4. **No crash reporting or telemetry.** Only the local, user-toggled
+   `DiagnosticLogger` ([DiagnosticLogger.swift](Sources/VoiceType/DiagnosticLogger.swift))
+   exists — there's no way to learn about a crash or failure in the field
+   unless a user notices and manually sends the log file. Worth
+   evaluating a lightweight, privacy-respecting crash reporter now that
+   the app has a real distribution path (GitHub Releases + Homebrew)
+   beyond just the dev machine.
+
+5. **No automated dependency vulnerability scanning.** `Package.resolved`
+   pins exact revisions for `FluidAudio`, `KeyboardShortcuts`, and
+   `Sparkle`, but nothing (e.g. Dependabot/Renovate) flags known
+   advisories against them. Low effort to add (a `.github/dependabot.yml`
+   for the Swift package ecosystem) once GitHub's SPM support for it is
+   confirmed adequate.
+
+6. **Sparkle appcast only ever holds one `<item>`.**
+   [scripts/release.sh](scripts/release.sh) does `rm -rf "$RELEASE_DIR"`
+   before every run, so `generate_appcast` only ever sees the single zip
+   just built — no version history, no delta updates, and no persisted
+   release-note links across releases. Fine for "latest always replaces,"
+   but revisit if staged rollouts or delta updates become worthwhile
+   (would mean keeping prior release zips around rather than wiping
+   `release/` each time).
+
 ## Done
 
 - History storage scale-up, Stage 6 — Sortable folder names. New entries'
