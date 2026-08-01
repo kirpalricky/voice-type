@@ -2,27 +2,7 @@
 
 ## Open (stack ranked)
 
-1. **Homebrew cask ships with `sha256 :no_check`.**
-   ([Casks/yapboard.rb](https://github.com/kirpalricky/homebrew-yapboard/blob/main/Casks/yapboard.rb)
-   in the tap repo) — placeholder until the first real release exists to
-   hash. After running `scripts/release.sh` for the first time, compute
-   `shasum -a 256` on the published zip, replace `:no_check` with the real
-   digest, and push to the tap. Blocks nothing today (no release has been
-   cut yet) but must happen before the first `brew install` — `:no_check`
-   permanently disables integrity verification if left in place.
-
-2. **No CI-driven release pipeline; `scripts/release.sh` only runs
-   locally.** `.github/workflows/ci.yml` still only does `swift build` /
-   `swift test` on push/PR — nothing runs `scripts/release.sh`, so cutting
-   a release is entirely manual on one machine. Also no lint/static
-   analysis gate (e.g. SwiftLint) in CI. Consider a manually-triggered
-   `workflow_dispatch` job that runs `scripts/release.sh` (would need the
-   ad-hoc signing identity and `gh` auth as repo secrets — the Sparkle
-   private key in particular should probably stay local-only rather than
-   living in CI secrets, given it's irreplaceable once installed users
-   depend on it).
-
-3. **No crash reporting or telemetry.** Only the local, user-toggled
+1. **No crash reporting or telemetry.** Only the local, user-toggled
    `DiagnosticLogger` ([DiagnosticLogger.swift](Sources/Yapboard/DiagnosticLogger.swift))
    exists — there's no way to learn about a crash or failure in the field
    unless a user notices and manually sends the log file. Worth
@@ -30,14 +10,14 @@
    the app has a real distribution path (GitHub Releases + Homebrew)
    beyond just the dev machine.
 
-4. **No automated dependency vulnerability scanning.** `Package.resolved`
+2. **No automated dependency vulnerability scanning.** `Package.resolved`
    pins exact revisions for `FluidAudio`, `KeyboardShortcuts`, and
    `Sparkle`, but nothing (e.g. Dependabot/Renovate) flags known
    advisories against them. Low effort to add (a `.github/dependabot.yml`
    for the Swift package ecosystem) once GitHub's SPM support for it is
    confirmed adequate.
 
-5. **Sparkle appcast only ever holds one `<item>`.**
+3. **Sparkle appcast only ever holds one `<item>`.**
    [scripts/release.sh](scripts/release.sh) does `rm -rf "$RELEASE_DIR"`
    before every run, so `generate_appcast` only ever sees the single zip
    just built — no version history, no delta updates, and no persisted
@@ -47,6 +27,20 @@
    `release/` each time).
 
 ## Done
+
+- Cut the first real release (v1.2.0) and fixed the Homebrew cask's
+  `sha256 :no_check` placeholder with the real digest
+  ([homebrew-yapboard@4095b01](https://github.com/kirpalricky/homebrew-yapboard/commit/4095b01)).
+  Considered a `workflow_dispatch` CI pipeline for `scripts/release.sh`
+  first (former backlog #2) but decided against it: the app is ad-hoc
+  signed with no Developer ID, so the Sparkle EdDSA private key is the
+  *only* trust anchor, and Sparkle's own client code refuses to accept
+  an EdDSA key rotation without a Developer-ID-signed update — meaning a
+  leaked key has no recovery path at all today. Storing that key as a CI
+  secret (even gated behind a required-reviewer GitHub Environment) was
+  judged not worth the added exposure until Developer ID signing +
+  notarization exists to make the key rotatable. Releases stay local-only
+  for now; revisit CI once notarization lands.
 
 - Reprocess history entries from raw audio. `HistoryStore.updateEntry()`
   overwrites `raw.txt`/`polished.txt` in place (same id/folder/timestamp),
