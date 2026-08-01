@@ -8,12 +8,16 @@ import FoundationModels
 struct Enhancer {
     /// Check if Foundation Models are available on this device
     static var isAvailable: Bool {
+#if canImport(FoundationModels)
         if #available(macOS 26, *) {
             let model = SystemLanguageModel.default
             return model.isAvailable
         } else {
             return false
         }
+#else
+        return false
+#endif
     }
 
     /// Polish a raw transcript using on-device Foundation Models
@@ -28,6 +32,7 @@ struct Enhancer {
             return rawTranscript
         }
 
+#if canImport(FoundationModels)
         if #available(macOS 26, *) {
             // Build glossary instructions
             let glossaryInstructions: String
@@ -81,6 +86,9 @@ struct Enhancer {
             // Fallback for systems without Foundation Models
             return rawTranscript
         }
+#else
+        return rawTranscript
+#endif
     }
 
     /// Decides whether a polished transcript deviated too far from the raw input —
