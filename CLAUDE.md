@@ -1,4 +1,4 @@
-# voice-type — Agent Workflow
+# yapboard — Agent Workflow
 
 Default execution hierarchy for bugfix/feature work in this repo — applies by default, not just when explicitly invoked:
 
