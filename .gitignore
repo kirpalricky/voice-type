@@ -3,3 +3,5 @@
 *.xcodeproj
 .DS_Store
 .worktrees
+release/
+VoiceType.app

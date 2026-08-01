@@ -33,10 +33,12 @@ struct SettingsView: View {
     @State private var selectedSection: SettingsSection
     var glossaryStore: GlossaryStore
     var historyStore: HistoryStore
+    var updaterViewModel: UpdaterViewModel
 
-    init(glossaryStore: GlossaryStore, historyStore: HistoryStore, initialSection: SettingsSection = .general) {
+    init(glossaryStore: GlossaryStore, historyStore: HistoryStore, updaterViewModel: UpdaterViewModel, initialSection: SettingsSection = .general) {
         self.glossaryStore = glossaryStore
         self.historyStore = historyStore
+        self.updaterViewModel = updaterViewModel
         self._selectedSection = State(initialValue: initialSection)
     }
 
@@ -57,7 +59,7 @@ struct SettingsView: View {
                 case .history:
                     HistorySettingsTab(historyStore: historyStore)
                 case .about:
-                    AboutSettingsTab()
+                    AboutSettingsTab(updaterViewModel: updaterViewModel)
                 }
             }
             .navigationTitle(selectedSection.label)
@@ -127,6 +129,8 @@ private struct Acknowledgment: Identifiable {
 }
 
 struct AboutSettingsTab: View {
+    var updaterViewModel: UpdaterViewModel
+
     private static let acknowledgments: [Acknowledgment] = [
         Acknowledgment(name: "FluidAudio", purpose: "On-device speech recognition (Parakeet model)", url: "https://github.com/FluidInference/FluidAudio"),
         Acknowledgment(name: "KeyboardShortcuts", purpose: "Global hotkey recording and handling", url: "https://github.com/sindresorhus/KeyboardShortcuts")
@@ -154,6 +158,13 @@ struct AboutSettingsTab: View {
                         .foregroundColor(.secondary)
                 }
                 .padding(.vertical, 4)
+            }
+
+            Section(header: Text("Updates")) {
+                Toggle("Automatically check for updates", isOn: Binding(
+                    get: { updaterViewModel.automaticallyChecksForUpdates },
+                    set: { updaterViewModel.automaticallyChecksForUpdates = $0 }
+                ))
             }
 
             Section(header: Text("Diagnostics")) {

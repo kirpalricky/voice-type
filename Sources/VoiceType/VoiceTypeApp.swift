@@ -2,6 +2,35 @@ import SwiftUI
 import KeyboardShortcuts
 import OSLog
 import AVFoundation
+import Combine
+import Sparkle
+import Observation
+import AppKit
+
+@Observable
+final class UpdaterViewModel: NSObject {
+    private let updaterController: SPUStandardUpdaterController
+    var canCheckForUpdates = false
+    private var cancellables = Set<AnyCancellable>()
+
+    override init() {
+        updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        super.init()
+        updaterController.updater.publisher(for: \.canCheckForUpdates)
+            .sink { [weak self] value in self?.canCheckForUpdates = value }
+            .store(in: &cancellables)
+    }
+
+    var automaticallyChecksForUpdates: Bool {
+        get { updaterController.updater.automaticallyChecksForUpdates }
+        set { updaterController.updater.automaticallyChecksForUpdates = newValue }
+    }
+
+    func checkForUpdates() {
+        NSApp.activate(ignoringOtherApps: true)
+        updaterController.checkForUpdates(nil)
+    }
+}
 
 @main
 struct VoiceTypeApp: App {
@@ -15,6 +44,7 @@ struct VoiceTypeApp: App {
     @State private var recordingTimer: Timer?
     @State private var transcriptionCoordinator: TranscriptionCoordinator?
     @State private var hotkeyManager: HotkeyManager?
+    @State private var updaterViewModel = UpdaterViewModel()
 
     private let logger = OSLog(subsystem: "com.voicetype.app", category: "VoiceTypeApp")
 
@@ -59,6 +89,7 @@ struct VoiceTypeApp: App {
         MenuBarExtra("VoiceType", systemImage: menuBarIcon) {
             VoiceTypeMenuView(
                 appState: appState,
+                updaterViewModel: updaterViewModel,
                 onSettings: { openSettings() },
                 onShowHistory: openHistory,
                 onShowAbout: { openSettings(section: .about) },
@@ -133,7 +164,7 @@ struct VoiceTypeApp: App {
 
     private func openSettings(section: SettingsSection = .general) {
         if settingsWindow == nil {
-            let settingsView = SettingsView(glossaryStore: glossaryStore, historyStore: historyStore, initialSection: section)
+            let settingsView = SettingsView(glossaryStore: glossaryStore, historyStore: historyStore, updaterViewModel: updaterViewModel, initialSection: section)
             let hostingController = NSHostingController(rootView: settingsView)
             let window = NSWindow(contentViewController: hostingController)
             window.title = "VoiceType Settings"
@@ -151,6 +182,7 @@ struct VoiceTypeApp: App {
 
 struct VoiceTypeMenuView: View {
     var appState: AppState
+    var updaterViewModel: UpdaterViewModel
     var onSettings: () -> Void
     var onShowHistory: () -> Void
     var onShowAbout: () -> Void
@@ -258,6 +290,22 @@ struct VoiceTypeMenuView: View {
             .onHover { hovering in
                 settingsRowHovering = hovering
             }
+
+            // Check for Updates button
+            Button(action: { updaterViewModel.checkForUpdates() }) {
+                HStack {
+                    Text("Check for Updates…")
+                        .font(.system(size: 13))
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!updaterViewModel.canCheckForUpdates)
+            .opacity(updaterViewModel.canCheckForUpdates ? 1.0 : 0.5)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .background(Color.clear)
 
             Divider()
 
