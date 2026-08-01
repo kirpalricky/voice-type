@@ -456,9 +456,11 @@ struct HistorySettingsTab: View {
                                 Button(action: { showingRawInDetail = false }) {
                                     Text("Polished")
                                         .font(.caption)
+                                        .fontWeight(showingRawInDetail ? .regular : .semibold)
+                                        .foregroundColor(showingRawInDetail ? .secondary : .primary)
                                         .padding(.vertical, 4)
                                         .padding(.horizontal, 8)
-                                        .background(showingRawInDetail ? Color.clear : Color(nsColor: .controlBackgroundColor))
+                                        .background(showingRawInDetail ? Color.clear : Color.accentColor.opacity(0.15))
                                         .cornerRadius(4)
                                 }
                                 .buttonStyle(.plain)
@@ -466,9 +468,11 @@ struct HistorySettingsTab: View {
                                 Button(action: { showingRawInDetail = true }) {
                                     Text("Raw")
                                         .font(.caption)
+                                        .fontWeight(showingRawInDetail ? .semibold : .regular)
+                                        .foregroundColor(showingRawInDetail ? .primary : .secondary)
                                         .padding(.vertical, 4)
                                         .padding(.horizontal, 8)
-                                        .background(showingRawInDetail ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+                                        .background(showingRawInDetail ? Color.accentColor.opacity(0.15) : Color.clear)
                                         .cornerRadius(4)
                                 }
                                 .buttonStyle(.plain)
