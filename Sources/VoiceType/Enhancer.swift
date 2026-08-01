@@ -1,6 +1,6 @@
 import Foundation
 
-#if os(macOS)
+#if canImport(FoundationModels)
 import FoundationModels
 #endif
 
