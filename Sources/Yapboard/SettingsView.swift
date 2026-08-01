@@ -146,8 +146,6 @@ struct AboutSettingsTab: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
     }
 
-    @State private var diagnosticLoggingEnabled = DiagnosticLogger.shared.isEnabled
-    @State private var showingClearLogConfirmation = false
     @State private var crashReportingEnabled = CrashReportingConsentManager.shared.state == .enabled
     @State private var showingLastReportAlert = false
 
@@ -172,26 +170,6 @@ struct AboutSettingsTab: View {
             }
 
             Section(header: Text("Diagnostics")) {
-                Toggle("Enable diagnostic logging", isOn: $diagnosticLoggingEnabled)
-                    .onChange(of: diagnosticLoggingEnabled) { _, newValue in
-                        DiagnosticLogger.shared.isEnabled = newValue
-                    }
-                Text("Writes app lifecycle and recording/transcription events to a log file — useful when reporting an issue. Off by default; does not include transcript text.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                HStack {
-                    Button("Reveal Log in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([DiagnosticLogger.shared.logFileURL])
-                    }
-                    Button("Clear Log") {
-                        showingClearLogConfirmation = true
-                    }
-                }
-                .padding(.top, 2)
-
-                Divider()
-                    .padding(.vertical, 4)
-
                 Toggle("Enable crash & error reporting", isOn: $crashReportingEnabled)
                     .onChange(of: crashReportingEnabled) { _, newValue in
                         if newValue {
@@ -216,15 +194,6 @@ struct AboutSettingsTab: View {
                         Text(lastReport)
                     }
                 }
-            }
-            .confirmationDialog(
-                "Clear the diagnostics log?",
-                isPresented: $showingClearLogConfirmation
-            ) {
-                Button("Clear Log", role: .destructive) {
-                    DiagnosticLogger.shared.clearLog()
-                }
-                Button("Cancel", role: .cancel) {}
             }
 
             Section(header: Text("Open Source Acknowledgments")) {
