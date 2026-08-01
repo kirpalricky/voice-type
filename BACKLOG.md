@@ -2,15 +2,7 @@
 
 ## Open (stack ranked)
 
-1. **No crash reporting or telemetry.** Only the local, user-toggled
-   `DiagnosticLogger` ([DiagnosticLogger.swift](Sources/Yapboard/DiagnosticLogger.swift))
-   exists — there's no way to learn about a crash or failure in the field
-   unless a user notices and manually sends the log file. Worth
-   evaluating a lightweight, privacy-respecting crash reporter now that
-   the app has a real distribution path (GitHub Releases + Homebrew)
-   beyond just the dev machine.
-
-2. **Sparkle appcast only ever holds one `<item>`.**
+1. **Sparkle appcast only ever holds one `<item>`.**
    [scripts/release.sh](scripts/release.sh) does `rm -rf "$RELEASE_DIR"`
    before every run, so `generate_appcast` only ever sees the single zip
    just built — no version history, no delta updates, and no persisted
@@ -20,6 +12,52 @@
    `release/` each time).
 
 ## Done
+
+- Crash reporting & non-fatal error telemetry via `sentry-cocoa` →
+  hosted GlitchTip (two projects, `yapboard-crashes`/`yapboard-errors`,
+  separate DSNs against a shared 1000-events/month free-tier cap).
+  Configured deny-most: no session tracking, no perf/profiling traces, no
+  default PII, no screenshots/view-hierarchy, no file-IO/user-interaction
+  tracing; `beforeSend`/`beforeBreadcrumb` redact `/Users/<name>/` paths
+  and gate on a three-state consent (`unset`/`enabled`/`disabled`) via a
+  holding-pen pattern, since the crash handler installs before the app
+  can ask permission. Consent is asked once — on the first crash
+  (`SentrySDK.crashedLastRun`) or first non-fatal error, whichever comes
+  first — surfaced immediately at launch or mid-session, with a manual
+  override in About > Diagnostics
+  ([SettingsView.swift](Sources/Yapboard/SettingsView.swift)). Existing
+  `os_log(.error, ...)` sites now also feed a new `ErrorReporter`
+  ([ErrorReporter.swift](Sources/Yapboard/ErrorReporter.swift)), which
+  tallies by `(site, domain, code)` and flushes once per session as a
+  single batched event — not one send per error — to stay well under
+  quota. `Transcriber`'s error path is deliberately sanitized before
+  reporting since the underlying error can otherwise carry transcribed
+  speech text. App-specific scope context (pipeline stage, permission
+  state, model load state, history size, memory footprint) is attached
+  via `SentrySDK.configureScope`
+  ([CrashContext.swift](Sources/Yapboard/CrashContext.swift)) —
+  explicitly excluding transcript text, glossary contents, and any
+  hardware-derived identifiers. `scripts/release.sh` now verifies a
+  `.dSYM` is produced and archives the shipped (post-signing) binary +
+  dSYM per version under `./release-symbols/`, cross-checking their
+  UUIDs match, since none of this is useful without preserved symbols.
+  Reviewed by `opus-consultant` before merge; addressed all must-fix
+  findings (a transcript-content leak via `TranscriberError`'s rethrow,
+  non-fatal errors never triggering the consent ask, the dialog being
+  gated behind menu-bar interaction instead of firing at launch, a
+  release-script re-run corrupting the symbol archive via nested `cp
+  -R`, and a gitignored `Secrets.swift` breaking CI) plus several
+  should-fix items (the dual-DSN wiring itself, a pinned SDK version,
+  the Settings toggle replaying held events instead of stranding them).
+  173 tests pass.
+
+  **Known limitation, not yet resolved:** whether GlitchTip's hosted
+  free tier actually symbolicates native Apple crashes (it may lack
+  Sentry's separate `symbolicator` service) is unverified — the spike
+  requires shipping one deliberate crash from a real release build,
+  deferred pending confirmation since it touches the live
+  release/publish pipeline (`gh release create`/`upload`) rather than
+  something safely reversible.
 
 - Added automated dependency vulnerability scanning via
   [.github/dependabot.yml](.github/dependabot.yml). Confirmed GitHub's
