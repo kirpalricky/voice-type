@@ -80,16 +80,7 @@ enum SentryConfig {
             // Strip user identity and IP address unconditionally.
             // This must happen regardless of consent state to prevent leaking stable identifiers
             // and IP addresses in events held in the holding-pen or dropped events.
-            //
-            // Note: setting ipAddress here does NOT reliably control what GlitchTip stores.
-            // Live testing confirmed it stores the same value (its own /24-truncated,
-            // last-octet-zeroed anonymization of the real IP per GlitchTip's project-level
-            // scrubIPAddresses setting) regardless of whether the client sends nil, omits the
-            // field, or sends "". IP-address handling is a server-side GlitchTip policy, not
-            // something this client can override — this call remains defensive/belt-and-suspenders.
-            let redactedUser = Sentry.User()
-            redactedUser.ipAddress = ""
-            redactedEvent.user = redactedUser
+            redactedEvent.user = nil
 
             // Remove identity-related tags.
             if let tags = redactedEvent.tags {
