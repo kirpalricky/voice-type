@@ -11,11 +11,11 @@ extension Tag {
 /// to verify vocabulary terms and overall meaning survive degradation.
 ///
 /// Opt-in only (downloads TTS + ASR models on first run, slow): run with
-///   VOICETYPE_AUDIO_EVAL=1 swift test --filter AudioRobustnessEvalTests
+///   YAPBOARD_AUDIO_EVAL=1 swift test --filter AudioRobustnessEvalTests
 // .serialized: each case spins up its own real UnifiedAsrManager (CoreML/ANE) — avoid N concurrent model loads.
 @Suite(
     .tags(.audioEval),
-    .enabled(if: ProcessInfo.processInfo.environment["VOICETYPE_AUDIO_EVAL"] != nil),
+    .enabled(if: ProcessInfo.processInfo.environment["YAPBOARD_AUDIO_EVAL"] != nil),
     .serialized
 )
 struct AudioRobustnessEvalTests {
