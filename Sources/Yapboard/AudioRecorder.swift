@@ -4,7 +4,7 @@ import OSLog
 
 /// Records audio from the microphone to a buffer
 actor AudioRecorder {
-    private let logger = OSLog(subsystem: "com.voicetype.audiorecorder", category: "AudioRecorder")
+    private let logger = OSLog(subsystem: "com.yapboard.audiorecorder", category: "AudioRecorder")
 
     private var audioEngine: AVAudioEngine?
     private var audioBuffer: [Float] = []

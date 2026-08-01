@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import OSLog
-@testable import VoiceType
+@testable import Yapboard
 
 // MARK: - Test Doubles
 
@@ -89,7 +89,7 @@ struct TranscriptionCoordinatorTests {
         historyStore: HistoryStore,
         onHideResultPanel: @escaping () -> Void = {}
     ) -> TranscriptionCoordinator {
-        let logger = OSLog(subsystem: "com.voicetype.test", category: "test")
+        let logger = OSLog(subsystem: "com.yapboard.test", category: "test")
         return TranscriptionCoordinator(
             appState: appState,
             audioRecorder: audioRecorder,

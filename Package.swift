@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "VoiceType",
+    name: "Yapboard",
     platforms: [
         .macOS(.v14)
     ],
@@ -14,7 +14,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "VoiceType",
+            name: "Yapboard",
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
@@ -26,9 +26,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "VoiceTypeTests",
+            name: "YapboardTests",
             dependencies: [
-                "VoiceType",
+                "Yapboard",
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "Testing", package: "swift-testing")
             ]

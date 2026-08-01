@@ -78,7 +78,7 @@ struct GeneralSettingsTab: View {
                     KeyboardShortcuts.Recorder("Record hotkey:", name: .toggleRecording)
                 } else {
                     Label {
-                        Text("Hotkey recorder unavailable — please reinstall VoiceType.")
+                        Text("Hotkey recorder unavailable — please reinstall Yapboard.")
                             .foregroundStyle(.orange)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -151,7 +151,7 @@ struct AboutSettingsTab: View {
         Form {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("VoiceType")
+                    Text("Yapboard")
                         .font(.title2.bold())
                     Text("Version \(version) (\(build))")
                         .font(.callout)
@@ -213,7 +213,7 @@ struct AboutSettingsTab: View {
             }
 
             Section(header: Text("License")) {
-                Text("VoiceType is provided as-is, with no warranty of any kind. Third-party components above are used under their respective open-source licenses — see each project's repository for full license terms.")
+                Text("Yapboard is provided as-is, with no warranty of any kind. Third-party components above are used under their respective open-source licenses — see each project's repository for full license terms.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 4)

@@ -4,7 +4,7 @@ import OSLog
 
 /// Wraps FluidAudio's Parakeet model for speech-to-text transcription
 actor Transcriber {
-    private let logger = OSLog(subsystem: "com.voicetype.transcriber", category: "Transcriber")
+    private let logger = OSLog(subsystem: "com.yapboard.transcriber", category: "Transcriber")
 
     private var asrManager: UnifiedAsrManager?
     private var isInitialized = false

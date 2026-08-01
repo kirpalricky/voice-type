@@ -83,12 +83,12 @@ struct HistoryIndex: Codable {
 }
 
 /// Persists a rolling history of transcriptions and their source audio to
-/// `~/Library/Application Support/VoiceType/`.
+/// `~/Library/Application Support/Yapboard/`.
 @MainActor
 @Observable
 final class HistoryStore {
     @ObservationIgnored private let fileManager = FileManager.default
-    @ObservationIgnored private let logger = OSLog(subsystem: "com.voicetype.history", category: "HistoryStore")
+    @ObservationIgnored private let logger = OSLog(subsystem: "com.yapboard.history", category: "HistoryStore")
     @ObservationIgnored private let maxEntries: Int
     @ObservationIgnored private let baseDirectoryOverride: URL?
     @ObservationIgnored private var pendingLoadTask: Task<Void, Never>?
@@ -100,7 +100,7 @@ final class HistoryStore {
             return override
         }
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return appSupport.appendingPathComponent("VoiceType", isDirectory: true)
+        return appSupport.appendingPathComponent("Yapboard", isDirectory: true)
     }
 
     var recordingsDir: URL {
@@ -198,7 +198,7 @@ final class HistoryStore {
                     // Check if index version matches current version
                     if cachedIndex.version != HistoryIndex.currentVersion {
                         // Version mismatch, fall through to full scan
-                        let logger = OSLog(subsystem: "com.voicetype.history", category: "HistoryStore")
+                        let logger = OSLog(subsystem: "com.yapboard.history", category: "HistoryStore")
                         os_log("Index version mismatch, forcing full scan", log: logger, type: .debug)
                     } else if FileManager.default.fileExists(atPath: recordingsDir.path) {
                         // Verify folder names match (fast path validation)
@@ -223,13 +223,13 @@ final class HistoryStore {
                     }
                 } catch {
                     // Index exists but is invalid, fall through to scan
-                    let logger = OSLog(subsystem: "com.voicetype.history", category: "HistoryStore")
+                    let logger = OSLog(subsystem: "com.yapboard.history", category: "HistoryStore")
                     os_log("Failed to validate index cache in async scan: %@", log: logger, type: .debug, error.localizedDescription)
                 }
             }
 
             // Index doesn't exist or is invalid, perform full scan
-            let (scanned, observedFolderNames) = Self.scanDirectory(recordingsDir, fileManager: FileManager.default, logger: OSLog(subsystem: "com.voicetype.history", category: "HistoryStore"))
+            let (scanned, observedFolderNames) = Self.scanDirectory(recordingsDir, fileManager: FileManager.default, logger: OSLog(subsystem: "com.yapboard.history", category: "HistoryStore"))
             await MainActor.run {
                 self.mergeAndPersistScanResults(scanned, observedFolderNames: observedFolderNames)
             }

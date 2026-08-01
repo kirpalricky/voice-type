@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import AVFoundation
-@testable import VoiceType
+@testable import Yapboard
 
 @Suite
 @MainActor

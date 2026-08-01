@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds VoiceType in release mode, assembles a signed .app bundle, zips it,
+# Builds Yapboard in release mode, assembles a signed .app bundle, zips it,
 # generates a Sparkle appcast, and publishes to GitHub Releases.
 #
 # Prerequisites:
@@ -13,7 +13,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PLIST=Sources/VoiceType/Resources/Info.plist
+PLIST=Sources/Yapboard/Resources/Info.plist
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST")
 
 # Auto-bump CFBundleVersion (the internal build counter) for the release
@@ -22,12 +22,12 @@ BUILD=$(( BUILD + 1 ))
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$PLIST"
 
 RELEASE_DIR="./release"
-APP_NAME="VoiceType"
+APP_NAME="Yapboard"
 APP_BUNDLE="$APP_NAME.app"
 ZIP_FILE="$RELEASE_DIR/$APP_NAME-$VERSION.zip"
 APPCAST_FILE="$RELEASE_DIR/appcast.xml"
 
-echo "==> Building VoiceType $VERSION"
+echo "==> Building Yapboard $VERSION"
 
 # Verify Sparkle tools are available
 GENERATE_APPCAST=$( { find .build -name "generate_appcast" -type f 2>/dev/null || true; } | head -1)
@@ -123,9 +123,9 @@ echo "==> Assembling .app bundle"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 
-cp "$ARCH_DIR/VoiceType" "$APP_BUNDLE/Contents/MacOS/VoiceType"
-cp Sources/VoiceType/Resources/Info.plist "$APP_BUNDLE/Contents/Info.plist"
-cp Sources/VoiceType/Resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+cp "$ARCH_DIR/Yapboard" "$APP_BUNDLE/Contents/MacOS/Yapboard"
+cp Sources/Yapboard/Resources/Info.plist "$APP_BUNDLE/Contents/Info.plist"
+cp Sources/Yapboard/Resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 cp -R "$ARCH_DIR/KeyboardShortcuts_KeyboardShortcuts.bundle" "$APP_BUNDLE/Contents/Resources/KeyboardShortcuts_KeyboardShortcuts.bundle"
 
 # Verify the KeyboardShortcuts bundle was copied successfully and is non-empty
@@ -155,7 +155,7 @@ find "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" -type f -perm +111 -exe
 codesign --force -s - "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
 
 # Add rpath before signing the main app
-install_name_tool -add_rpath @executable_path/../Frameworks "$APP_BUNDLE/Contents/MacOS/VoiceType"
+install_name_tool -add_rpath @executable_path/../Frameworks "$APP_BUNDLE/Contents/MacOS/Yapboard"
 
 # Sign the main app last
 codesign --force -s - "$APP_BUNDLE"
@@ -172,7 +172,7 @@ echo "==> Generating Sparkle appcast"
 # $RELEASE_DIR/appcast.xml itself (it does not print the appcast to stdout) — do
 # NOT redirect its stdout to $APPCAST_FILE, that would truncate the very file the
 # tool is about to write and race with it.
-if ! "$GENERATE_APPCAST" --download-url-prefix "https://github.com/kirpalricky/voice-type/releases/download/v$VERSION/" "$RELEASE_DIR"; then
+if ! "$GENERATE_APPCAST" --download-url-prefix "https://github.com/kirpalricky/yapboard/releases/download/v$VERSION/" "$RELEASE_DIR"; then
     echo "ERROR: generate_appcast failed." >&2
     exit 1
 fi
@@ -205,4 +205,4 @@ fi
 echo "==> Release complete!"
 echo "    Zip: $ZIP_FILE"
 echo "    Appcast: $APPCAST_FILE"
-echo "    GitHub: https://github.com/kirpalricky/voice-type/releases/tag/v$VERSION"
+echo "    GitHub: https://github.com/kirpalricky/yapboard/releases/tag/v$VERSION"

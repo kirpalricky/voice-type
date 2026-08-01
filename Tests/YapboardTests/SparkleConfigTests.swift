@@ -1,20 +1,20 @@
 import Foundation
 import Testing
-@testable import VoiceType
+@testable import Yapboard
 
 @Suite
 struct SparkleConfigTests {
-    /// `Bundle.main` under `swift test` is the test runner's own bundle, not VoiceType.app —
+    /// `Bundle.main` under `swift test` is the test runner's own bundle, not Yapboard.app —
     /// the app's Info.plist is only assembled into a real app bundle by package_app.sh /
     /// scripts/release.sh, so these tests must read the source plist directly off disk.
     private static var infoPlist: [String: Any] {
         let sourceFile = URL(fileURLWithPath: #filePath)
         let repoRoot = sourceFile
             .deletingLastPathComponent()  // SparkleConfigTests.swift
-            .deletingLastPathComponent()  // VoiceTypeTests
+            .deletingLastPathComponent()  // YapboardTests
             .deletingLastPathComponent()  // Tests
         let plistURL = repoRoot
-            .appendingPathComponent("Sources/VoiceType/Resources/Info.plist")
+            .appendingPathComponent("Sources/Yapboard/Resources/Info.plist")
         guard let data = try? Data(contentsOf: plistURL),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
             return [:]

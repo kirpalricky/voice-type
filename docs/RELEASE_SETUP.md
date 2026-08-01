@@ -1,10 +1,10 @@
-# VoiceType Release Setup & Process
+# Yapboard Release Setup & Process
 
 This document covers the one-time setup required for Sparkle auto-updates and the process for cutting a release.
 
 ## No Notarization (Ad-Hoc Signing Only)
 
-VoiceType is distributed **without** an Apple Developer Program membership ($99/year cost ruled out), so there is no notarization and no Developer ID certificate. The app is signed ad-hoc only (`codesign --force --deep -s -`), which means every user will see a macOS Gatekeeper block on first launch.
+Yapboard is distributed **without** an Apple Developer Program membership ($99/year cost ruled out), so there is no notarization and no Developer ID certificate. The app is signed ad-hoc only (`codesign --force --deep -s -`), which means every user will see a macOS Gatekeeper block on first launch.
 
 ### Gatekeeper Block Workarounds
 
@@ -19,7 +19,7 @@ Users have two standard options to open the app on first launch:
 
 **Option 2: xattr Command**
 1. Open Terminal
-2. Run: `xattr -d com.apple.quarantine /Applications/VoiceType.app`
+2. Run: `xattr -d com.apple.quarantine /Applications/Yapboard.app`
 3. Then open the app normally
 
 **Note on Gatekeeper and Updates**: The Gatekeeper check only happens on the very first launch for a given signature — this holds for manually-downloaded zips and user installs. However, after Sparkle updates the app in place, the signature changes and TCC (microphone permission) may need re-granting; see below.
@@ -28,7 +28,7 @@ After this one-time step, the app works normally and Sparkle auto-updates procee
 
 ### TCC Permission Re-Grant After Updates
 
-Because VoiceType is ad-hoc signed (no stable Team ID), each build has a different code signature identity. When Sparkle installs an update, macOS TCC (Transparency, Consent, and Control) may treat the updated binary as a "different app" — users might see a re-prompt to grant microphone permission, or the permission grant could go stale. This is expected behavior given the no-notarization tradeoff, not a bug. Users who see this after an update can simply re-grant microphone permission in **System Settings > Privacy & Security > Microphone**.
+Because Yapboard is ad-hoc signed (no stable Team ID), each build has a different code signature identity. When Sparkle installs an update, macOS TCC (Transparency, Consent, and Control) may treat the updated binary as a "different app" — users might see a re-prompt to grant microphone permission, or the permission grant could go stale. This is expected behavior given the no-notarization tradeoff, not a bug. Users who see this after an update can simply re-grant microphone permission in **System Settings > Privacy & Security > Microphone**.
 
 ## One-Time Sparkle Key Setup
 
@@ -50,7 +50,7 @@ Before cutting the first release, generate an EdDSA keypair for Sparkle to use w
    /path/to/generate_keys
    ```
 
-3. **Copy the public key** from the tool's output into `SUPublicEDKey` in `Sources/VoiceType/Resources/Info.plist`:
+3. **Copy the public key** from the tool's output into `SUPublicEDKey` in `Sources/Yapboard/Resources/Info.plist`:
    ```xml
    <key>SUPublicEDKey</key>
    <string>PASTE_PUBLIC_KEY_HERE</string>
@@ -58,7 +58,7 @@ Before cutting the first release, generate an EdDSA keypair for Sparkle to use w
 
 4. **Commit this change**:
    ```bash
-   git add Sources/VoiceType/Resources/Info.plist
+   git add Sources/Yapboard/Resources/Info.plist
    git commit -m "Add Sparkle public key"
    ```
 
@@ -66,18 +66,18 @@ Before cutting the first release, generate an EdDSA keypair for Sparkle to use w
 
 6. **Backup the private key immediately**: Export the Sparkle private key from your local Keychain and store it securely offline (e.g., in a password manager or encrypted backup). Losing this key permanently breaks auto-updates for every already-installed user — there is no way to regenerate a key that matches the already-shipped public key.
 
-The private key is stored in your local Keychain under the label Sparkle will prompt for during `generate_keys` (typically something like `com.kirpal.voicetype` or the app's bundle ID). `scripts/release.sh` will use this key to sign updates automatically.
+The private key is stored in your local Keychain under the label Sparkle will prompt for during `generate_keys` (typically something like `com.kirpal.yapboard` or the app's bundle ID). `scripts/release.sh` will use this key to sign updates automatically.
 
 ## Cutting a Release
 
 Once one-time setup is complete, releasing a new version is straightforward:
 
-1. **Bump the version** manually in `Sources/VoiceType/Resources/Info.plist`:
+1. **Bump the version** manually in `Sources/Yapboard/Resources/Info.plist`:
    - Update `CFBundleShortVersionString` to the new semantic version (e.g., `1.1.1`)
    - **Do not** manually modify `CFBundleVersion` — `scripts/release.sh` auto-increments it
    - Commit this change:
      ```bash
-     git add Sources/VoiceType/Resources/Info.plist
+     git add Sources/Yapboard/Resources/Info.plist
      git commit -m "Bump version to 1.1.1"
      ```
    
@@ -90,14 +90,14 @@ Once one-time setup is complete, releasing a new version is straightforward:
    This will:
    - Build the app in release mode
    - Assemble and ad-hoc sign the .app bundle
-   - Zip it as `VoiceType-<version>.zip`
+   - Zip it as `Yapboard-<version>.zip`
    - Generate a Sparkle-signed appcast (`appcast.xml`)
-   - Publish both to GitHub Releases at `https://github.com/kirpalricky/voice-type/releases`
+   - Publish both to GitHub Releases at `https://github.com/kirpalricky/yapboard/releases`
 
 3. **Verify the release**:
-   - Check GitHub: https://github.com/kirpalricky/voice-type/releases/tag/v1.1.1 (adjust version)
-   - Ensure both `VoiceType-1.1.1.zip` and `appcast.xml` are present
-   - The appcast URL should be available at: https://github.com/kirpalricky/voice-type/releases/latest/download/appcast.xml
+   - Check GitHub: https://github.com/kirpalricky/yapboard/releases/tag/v1.1.1 (adjust version)
+   - Ensure both `Yapboard-1.1.1.zip` and `appcast.xml` are present
+   - The appcast URL should be available at: https://github.com/kirpalricky/yapboard/releases/latest/download/appcast.xml
 
 ## Publishing to Homebrew
 
@@ -105,19 +105,19 @@ After a release is published to GitHub Releases:
 
 1. **Get the sha256 of the zip**:
    ```bash
-   shasum -a 256 release/VoiceType-1.1.1.zip
+   shasum -a 256 release/Yapboard-1.1.1.zip
    ```
 
-2. **Update the Homebrew cask formula** (in the separate tap repo `homebrew-voicetype`):
+2. **Update the Homebrew cask formula** (in the separate tap repo `homebrew-yapboard`):
    - Update the `version` field
    - Replace `sha256 :no_check` with the actual sha256
    - Commit and push
 
 3. **Users can then install/update via**:
    ```bash
-   brew install kirpalricky/voicetype/voicetype
+   brew install kirpalricky/yapboard/yapboard
    # or
-   brew upgrade voicetype
+   brew upgrade yapboard
    ```
 
 ## Troubleshooting
@@ -138,5 +138,5 @@ After a release is published to GitHub Releases:
 **Gatekeeper blocks the released .app on first launch**
 - This is expected and normal (no notarization). Instruct users to:
   - Right-click Open, or
-  - Run `xattr -d com.apple.quarantine /Applications/VoiceType.app`
+  - Run `xattr -d com.apple.quarantine /Applications/Yapboard.app`
 - Auto-updates work normally after that one-time step.

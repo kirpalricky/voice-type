@@ -5,7 +5,7 @@ import Foundation
 /// (where Xcode's console isn't available). Off by default; enabled via the About tab.
 ///
 /// Deliberately thread-safe and not actor-isolated so it can be called directly from actors
-/// (AudioRecorder, Transcriber) as well as MainActor code (VoiceTypeApp, TranscriptionCoordinator)
+/// (AudioRecorder, Transcriber) as well as MainActor code (YapboardApp, TranscriptionCoordinator)
 /// without forcing a hop just to log.
 final class DiagnosticLogger: @unchecked Sendable {
     static let shared = DiagnosticLogger()
@@ -21,7 +21,7 @@ final class DiagnosticLogger: @unchecked Sendable {
 
     var logFileURL: URL {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = appSupport.appendingPathComponent("VoiceType", isDirectory: true)
+        let dir = appSupport.appendingPathComponent("Yapboard", isDirectory: true)
         return dir.appendingPathComponent("diagnostics.log")
     }
 
