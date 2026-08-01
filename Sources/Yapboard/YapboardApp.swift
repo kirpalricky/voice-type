@@ -10,6 +10,7 @@ import Sentry
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var consentNotificationObserver: NSObjectProtocol?
+    private var isShowingConsentDialog = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Check if we should show consent dialog at launch
@@ -29,17 +30,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard ErrorReporter.shared.hasPendingTally else {
-            return .terminateNow
-        }
+        guard ErrorReporter.shared.hasPendingTally else { return .terminateNow }
 
-        DispatchQueue.global(qos: .utility).async {
+        // Bounded, main-thread wait: long enough for flush() to persist the envelope
+        // to disk (Sentry retries cached envelopes on next launch if the network send
+        // doesn't finish in time), short enough to be imperceptible. Never blocks
+        // termination indefinitely — unlike .terminateLater, this cannot fail to quit.
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
             ErrorReporter.shared.flush()
-            DispatchQueue.main.async {
-                NSApp.reply(toApplicationShouldTerminate: true)
-            }
+            done.signal()
         }
-        return .terminateLater
+        _ = done.wait(timeout: .now() + 0.75)
+        return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -50,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showCrashReportingConsentDialog() {
+        guard !isShowingConsentDialog else { return }
+        isShowingConsentDialog = true
+        defer { isShowingConsentDialog = false }
+
         let alert = NSAlert()
         alert.messageText = "Yapboard hit a problem."
         alert.informativeText = "Help improve it by sending anonymized crash & error reports? No transcript or personal content is ever included."
@@ -59,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Ensure the alert appears on top of other windows
         NSApp.activate(ignoringOtherApps: true)
+        alert.window.level = .floating
 
         let response = alert.runModal()
         switch response {
