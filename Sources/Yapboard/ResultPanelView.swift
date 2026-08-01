@@ -275,6 +275,19 @@ struct ResultPanelView: View {
         VStack(spacing: 12) {
             segmentedControl
 
+            if appState.polishingFailed {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Text("Polishing unavailable — showing raw transcript")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             transcriptWell
 
             HStack(spacing: 10) {

@@ -12,6 +12,7 @@ final class AppState {
     var elapsedRecordingSeconds: Int = 0
     var statusMessage: String = ""
     var processingError: String?
+    var polishingFailed: Bool = false
 
     /// True from launch until the Parakeet model has finished loading (or failed to), so the
     /// UI can disable "Start Recording" instead of letting it silently no-op on first use.

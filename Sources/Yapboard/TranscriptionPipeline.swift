@@ -6,6 +6,7 @@ enum TranscriptionPipeline {
     struct Result {
         let rawTranscript: String
         let polishedTranscript: String
+        let polishingSucceeded: Bool
     }
 
     /// Runs the complete transcription pipeline on audio samples.
@@ -14,8 +15,8 @@ enum TranscriptionPipeline {
     ///   - transcriber: Speech-to-text service
     ///   - polisher: Transcript enhancement service
     ///   - glossary: Glossary entries for vocabulary matching (hoisted from GlossaryStore on main actor)
-    /// - Returns: Result containing both raw and polished transcripts
-    /// - Throws: Any error from transcriber or polisher
+    /// - Returns: Result containing both raw and polished transcripts, and whether polishing succeeded
+    /// - Throws: Any error from transcriber; does NOT throw for polisher errors (falls back gracefully)
     static func run(
         audioSamples: [Float],
         transcriber: Transcribing,
@@ -39,8 +40,16 @@ enum TranscriptionPipeline {
                 return "\(entry.canonical) (also heard as: \(entry.variants.joined(separator: ", ")))"
             }
         }
-        let polishedTranscript = try await polisher.polish(afterFuzzyMatch, glossary: glossaryStrings)
 
-        return Result(rawTranscript: rawTranscript, polishedTranscript: polishedTranscript)
+        var polishedTranscript = afterFuzzyMatch
+        var polishingSucceeded = true
+        do {
+            polishedTranscript = try await polisher.polish(afterFuzzyMatch, glossary: glossaryStrings)
+        } catch {
+            // On polish error, fall back to pre-polish text (after vocab matching)
+            polishingSucceeded = false
+        }
+
+        return Result(rawTranscript: rawTranscript, polishedTranscript: polishedTranscript, polishingSucceeded: polishingSucceeded)
     }
 }

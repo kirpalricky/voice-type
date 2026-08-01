@@ -273,10 +273,10 @@ struct TranscriptionCoordinatorTests {
         #expect(polisher.polishCallCount == 1)
     }
 
-    // MARK: - Test 5: Polisher Error
+    // MARK: - Test 5: Polisher Error (Falls back gracefully)
 
-    @Test("Polisher error sets processingError and shows panel")
-    func polishError() async {
+    @Test("Polisher error falls back to raw transcript instead of failing the pipeline")
+    func polishErrorFallsBackToRawTranscript() async {
         let appState = AppState()
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -285,6 +285,8 @@ struct TranscriptionCoordinatorTests {
 
         let audioRecorder = FakeAudioRecorder()
         let transcriber = FakeTranscriber()
+        transcriber.transcribeResult = "hello world"
+
         let polisher = FakePolisher()
         polisher.polishError = TestError.polishingFailed
 
@@ -299,11 +301,64 @@ struct TranscriptionCoordinatorTests {
 
         await coordinator.stopRecordingAndTranscribe()
 
-        #expect(appState.processingError != nil)
+        // Pipeline should NOT set processingError
+        #expect(appState.processingError == nil)
         #expect(appState.isProcessing == false)
         #expect(appState.showingResultPanel == true)
-        // History should not have an entry if polishing failed
-        #expect(historyStore.entries.count == 0)
+        #expect(appState.polishingFailed == true)
+
+        // History SHOULD have an entry (with raw text as polished)
+        #expect(historyStore.entries.count == 1)
+        let entry = historyStore.entries[0]
+        #expect(entry.rawTranscript == "hello world")
+        #expect(entry.polishedTranscript == "hello world")  // Fallback to raw
+    }
+
+    // MARK: - Test 5b: Polishing Failed Flag Resets
+
+    @Test("Polishing failed flag resets to false on successful run after failure")
+    func polishingFailedFlagResets() async {
+        let appState = AppState()
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let glossaryStore = GlossaryStore(baseDirectoryOverride: tempDir)
+        let historyStore = HistoryStore(baseDirectoryOverride: tempDir)
+
+        let audioRecorder = FakeAudioRecorder()
+        let transcriber = FakeTranscriber()
+        transcriber.transcribeResult = "hello world"
+
+        let polisher = FakePolisher()
+
+        let coordinator = createCoordinator(
+            audioRecorder: audioRecorder,
+            transcriber: transcriber,
+            polisher: polisher,
+            appState: appState,
+            glossaryStore: glossaryStore,
+            historyStore: historyStore
+        )
+
+        // First call: polishing fails
+        polisher.polishError = TestError.polishingFailed
+        await coordinator.stopRecordingAndTranscribe()
+        #expect(appState.polishingFailed == true)
+        #expect(historyStore.entries.count == 1)
+
+        // Reset audio recorder and history for second call
+        audioRecorder.stopRecordingResult = [0.1, 0.2, 0.3]
+        historyStore.entries.removeAll()
+
+        // Second call: polishing succeeds
+        polisher.polishError = nil
+        polisher.polishResult = "Hello World."
+        await coordinator.stopRecordingAndTranscribe()
+
+        // polishingFailed should be reset to false
+        #expect(appState.polishingFailed == false)
+        #expect(historyStore.entries.count == 1)
+        let entry = historyStore.entries[0]
+        #expect(entry.polishedTranscript == "Hello World.")  // Successfully polished
     }
 
     // MARK: - Test 6: Transcribe Error
@@ -727,8 +782,8 @@ struct TranscriptionCoordinatorTests {
         }
     }
 
-    @Test("TranscriptionPipeline propagates polisher error")
-    func transcriptionPipeline_PropagatesPolisherError() async throws {
+    @Test("TranscriptionPipeline gracefully handles polisher error")
+    func transcriptionPipeline_GracefullyHandlesPolisherError() async throws {
         let audioSamples: [Float] = [0.1, 0.2, 0.3]
 
         let transcriber = FakeTranscriber()
@@ -739,16 +794,17 @@ struct TranscriptionCoordinatorTests {
 
         let glossary: [GlossaryEntry] = []
 
-        do {
-            try await TranscriptionPipeline.run(
-                audioSamples: audioSamples,
-                transcriber: transcriber,
-                polisher: polisher,
-                glossary: glossary
-            )
-            #expect(Bool(false), "Should have thrown polishingFailed")
-        } catch let error as TestError {
-            #expect(error == .polishingFailed)
-        }
+        // Pipeline should NOT throw; it should return a result with polishingSucceeded=false
+        let result = try await TranscriptionPipeline.run(
+            audioSamples: audioSamples,
+            transcriber: transcriber,
+            polisher: polisher,
+            glossary: glossary
+        )
+
+        // Verify the result contains the fallback text
+        #expect(result.rawTranscript == "hello world")
+        #expect(result.polishedTranscript == "hello world")  // Fallback to raw
+        #expect(result.polishingSucceeded == false)
     }
 }

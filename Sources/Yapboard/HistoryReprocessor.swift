@@ -86,10 +86,11 @@ final class HistoryReprocessor {
             throw ReprocessError.emptyResult
         }
 
-        // Check for polish downgrade: if the new polished output is identical to raw,
-        // but the original was polished (polished != raw), reject the update to avoid
-        // silently downgrading a good transcript.
-        if pipelineResult.polishedTranscript == pipelineResult.rawTranscript &&
+        // Check for polish downgrade: if polishing failed or if the new polished output is
+        // identical to raw, but the original was polished (polished != raw), reject the update
+        // to avoid silently downgrading a good transcript.
+        let polishingRegressed = !pipelineResult.polishingSucceeded || pipelineResult.polishedTranscript == pipelineResult.rawTranscript
+        if polishingRegressed &&
            entry.polishedTranscript != entry.rawTranscript {
             os_log("Reprocess blocked: polish would downgrade transcript for entry %@", log: self.logger, type: .debug, entry.id.uuidString)
             throw ReprocessError.polishDowngrade
