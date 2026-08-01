@@ -123,6 +123,7 @@ final class TranscriptionCoordinator {
 
     func stopRecordingAndTranscribe() async {
         DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() entered")
+        appState.polishingFailed = false
         do {
             // Stop recording and get audio samples
             let audioSamples = try await audioRecorder.stopRecording()
@@ -166,6 +167,13 @@ final class TranscriptionCoordinator {
                 )
             }
             try Task.checkCancellation()
+
+            // Check if polishing failed
+            if !pipelineResult.polishingSucceeded {
+                os_log("Polishing failed; falling back to raw transcript", log: self.logger, type: .error)
+                DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() polishing failed, using unpolished transcript as fallback")
+                appState.polishingFailed = true
+            }
 
             appState.rawTranscript = pipelineResult.rawTranscript
             appState.polishedTranscript = pipelineResult.polishedTranscript
