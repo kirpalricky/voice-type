@@ -3,7 +3,7 @@
 ## Open (stack ranked)
 
 1. **Reprocess history entries from raw audio.** `HistoryStore`
-  ([HistoryStore.swift](Sources/VoiceType/HistoryStore.swift)) already
+  ([HistoryStore.swift](Sources/Yapboard/HistoryStore.swift)) already
   saves the source audio per entry (`audioFileName`, `audioURL(for:)`),
   but there's no way to re-run transcription/polishing on it after the
   fact. Useful when we ship an ASR or `Enhancer` prompt change and want
@@ -21,7 +21,7 @@
     pipeline (currently under active iteration) settles down.
 
 2. **Homebrew cask ships with `sha256 :no_check`.**
-   ([Casks/voicetype.rb](https://github.com/kirpalricky/homebrew-voicetype/blob/main/Casks/voicetype.rb)
+   ([Casks/yapboard.rb](https://github.com/kirpalricky/homebrew-yapboard/blob/main/Casks/yapboard.rb)
    in the tap repo) — placeholder until the first real release exists to
    hash. After running `scripts/release.sh` for the first time, compute
    `shasum -a 256` on the published zip, replace `:no_check` with the real
@@ -41,7 +41,7 @@
    depend on it).
 
 4. **No crash reporting or telemetry.** Only the local, user-toggled
-   `DiagnosticLogger` ([DiagnosticLogger.swift](Sources/VoiceType/DiagnosticLogger.swift))
+   `DiagnosticLogger` ([DiagnosticLogger.swift](Sources/Yapboard/DiagnosticLogger.swift))
    exists — there's no way to learn about a crash or failure in the field
    unless a user notices and manually sends the log file. Worth
    evaluating a lightweight, privacy-respecting crash reporter now that
@@ -163,7 +163,7 @@
   `GlossaryStoreTests.swift` (13 cases) using Swift Testing (`@Test`).
 
 - Eager model download on launch. `TranscriptionCoordinator.preloadModel()`
-  is kicked off from `VoiceTypeApp.init()` on a background `Task`, disables
+  is kicked off from `YapboardApp.init()` on a background `Task`, disables
   "Start Recording" (menu item + hotkey) via `AppState.isModelLoading`
   until the model finishes loading (or fails, falling back to the existing
   lazy-load-on-first-use path), and surfaces progress via

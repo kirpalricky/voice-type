@@ -1,4 +1,4 @@
-# VoiceType
+# Yapboard
 
 A macOS menu bar app for hotkey-triggered voice dictation: hold a shortcut, speak, and get transcribed (and optionally AI-polished) text inserted wherever your cursor is.
 
@@ -29,15 +29,15 @@ swift test
 ./package_app.sh
 ```
 
-Produces a signed (ad-hoc) `.app` bundle. VoiceType is **not notarized** (no Apple Developer Program membership), so Gatekeeper will block first launch — see [docs/RELEASE_SETUP.md](docs/RELEASE_SETUP.md) for the standard workarounds (System Settings > Privacy & Security > Open Anyway, or `xattr -d com.apple.quarantine`).
+Produces a signed (ad-hoc) `.app` bundle. Yapboard is **not notarized** (no Apple Developer Program membership), so Gatekeeper will block first launch — see [docs/RELEASE_SETUP.md](docs/RELEASE_SETUP.md) for the standard workarounds (System Settings > Privacy & Security > Open Anyway, or `xattr -d com.apple.quarantine`).
 
 ## Installing via Homebrew
 
 ```bash
-brew install kirpalricky/voicetype/voicetype
+brew install kirpalricky/yapboard/yapboard
 ```
 
-Tap: [homebrew-voicetype](https://github.com/kirpalricky/homebrew-voicetype)
+Tap: [homebrew-yapboard](https://github.com/kirpalricky/homebrew-yapboard)
 
 ## Releasing
 
@@ -45,8 +45,8 @@ See [docs/RELEASE_SETUP.md](docs/RELEASE_SETUP.md) for the full Sparkle key setu
 
 ## Project layout
 
-- `Sources/VoiceType/` — app source (audio capture, transcription pipeline, hotkeys, settings, history, menu bar UI)
-- `Tests/VoiceTypeTests/` — test suite
+- `Sources/Yapboard/` — app source (audio capture, transcription pipeline, hotkeys, settings, history, menu bar UI)
+- `Tests/YapboardTests/` — test suite
 - `scripts/` — release automation
 - `docs/` — release and setup documentation
 - `BACKLOG.md` — open work items, stack ranked

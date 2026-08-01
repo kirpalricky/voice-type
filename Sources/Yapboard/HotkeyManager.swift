@@ -2,7 +2,7 @@ import KeyboardShortcuts
 import OSLog
 
 final class HotkeyManager {
-    private let logger = OSLog(subsystem: "com.voicetype.app", category: "HotkeyManager")
+    private let logger = OSLog(subsystem: "com.yapboard.app", category: "HotkeyManager")
 
     init(onKeyDown: @escaping () -> Void, onKeyUp: @escaping () -> Void) {
         DiagnosticLogger.shared.log("HotkeyManager.init registering handlers for .toggleRecording, current shortcut: \(String(describing: KeyboardShortcuts.getShortcut(for: .toggleRecording)))")

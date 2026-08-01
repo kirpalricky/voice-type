@@ -33,7 +33,7 @@ final class UpdaterViewModel: NSObject {
 }
 
 @main
-struct VoiceTypeApp: App {
+struct YapboardApp: App {
     @State private var appState = AppState()
     @State private var audioRecorder = AudioRecorder()
     @State private var transcriber = Transcriber()
@@ -46,7 +46,7 @@ struct VoiceTypeApp: App {
     @State private var hotkeyManager: HotkeyManager?
     @State private var updaterViewModel = UpdaterViewModel()
 
-    private let logger = OSLog(subsystem: "com.voicetype.app", category: "VoiceTypeApp")
+    private let logger = OSLog(subsystem: "com.yapboard.app", category: "YapboardApp")
 
     init() {
         // Assigning through the property name (`self.foo = ...`) inside init() does not
@@ -62,7 +62,7 @@ struct VoiceTypeApp: App {
             polisher: FoundationModelsPolisher(),
             glossaryStore: glossaryStore,
             historyStore: historyStore,
-            logger: OSLog(subsystem: "com.voicetype.app", category: "TranscriptionCoordinator"),
+            logger: OSLog(subsystem: "com.yapboard.app", category: "TranscriptionCoordinator"),
             onHideResultPanel: { [self] in resultPanelWindow?.hide() }
         )
         _transcriptionCoordinator = State(initialValue: coordinator)
@@ -86,8 +86,8 @@ struct VoiceTypeApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("VoiceType", systemImage: menuBarIcon) {
-            VoiceTypeMenuView(
+        MenuBarExtra("Yapboard", systemImage: menuBarIcon) {
+            YapboardMenuView(
                 appState: appState,
                 updaterViewModel: updaterViewModel,
                 onSettings: { openSettings() },
@@ -167,7 +167,7 @@ struct VoiceTypeApp: App {
             let settingsView = SettingsView(glossaryStore: glossaryStore, historyStore: historyStore, updaterViewModel: updaterViewModel, initialSection: section)
             let hostingController = NSHostingController(rootView: settingsView)
             let window = NSWindow(contentViewController: hostingController)
-            window.title = "VoiceType Settings"
+            window.title = "Yapboard Settings"
             window.setFrameAutosaveName("SettingsWindow")
             settingsWindow = window
         }
@@ -180,7 +180,7 @@ struct VoiceTypeApp: App {
     }
 }
 
-struct VoiceTypeMenuView: View {
+struct YapboardMenuView: View {
     var appState: AppState
     var updaterViewModel: UpdaterViewModel
     var onSettings: () -> Void
@@ -219,7 +219,7 @@ struct VoiceTypeMenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("VoiceType")
+            Text("Yapboard")
                 .font(.system(size: 13, weight: .semibold))
                 .padding(.vertical, 6)
                 .padding(.horizontal, 12)

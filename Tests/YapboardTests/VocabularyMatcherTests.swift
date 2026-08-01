@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import VoiceType
+@testable import Yapboard
 
 @Suite
 struct VocabularyMatcherTests {

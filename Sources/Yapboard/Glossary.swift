@@ -27,7 +27,7 @@ struct GlossaryEntry: Codable, Identifiable {
 @Observable
 final class GlossaryStore {
     @ObservationIgnored private let fileManager = FileManager.default
-    @ObservationIgnored private let logger = OSLog(subsystem: "com.voicetype.glossary", category: "GlossaryStore")
+    @ObservationIgnored private let logger = OSLog(subsystem: "com.yapboard.glossary", category: "GlossaryStore")
     @ObservationIgnored private let baseDirectoryOverride: URL?
 
     var entries: [GlossaryEntry] = []
@@ -38,7 +38,7 @@ final class GlossaryStore {
             baseDir = override
         } else {
             let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            baseDir = appSupport.appendingPathComponent("VoiceType", isDirectory: true)
+            baseDir = appSupport.appendingPathComponent("Yapboard", isDirectory: true)
         }
         return baseDir.appendingPathComponent("glossary.json")
     }

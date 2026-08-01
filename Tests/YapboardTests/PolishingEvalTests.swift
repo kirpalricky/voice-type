@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import VoiceType
+@testable import Yapboard
 
 /// Table-driven eval cases for Enhancer's polishing safety net (`isUnfaithfulPolish`).
 /// These are not unit tests of a single code path — they're a growing regression
@@ -146,7 +146,7 @@ struct PolishingEvalTests {
         EvalCase(
             label: "vocab.voiceType",
             raw: "i've been using voice type all week and it's great",
-            polished: "I've been using VoiceType all week, and it's great.",
+            polished: "I've been using Yapboard all week, and it's great.",
             expectFallback: false
         ),
         EvalCase(
@@ -170,7 +170,7 @@ struct PolishingEvalTests {
         EvalCase(
             label: "vocab.multipleTermsOneSentence",
             raw: "cloud native and super whisper and voice type all came up in the same meeting today",
-            polished: "CloudNative, SuperWhisper, and VoiceType all came up in the same meeting today.",
+            polished: "CloudNative, SuperWhisper, and Yapboard all came up in the same meeting today.",
             expectFallback: false
         ),
         EvalCase(
