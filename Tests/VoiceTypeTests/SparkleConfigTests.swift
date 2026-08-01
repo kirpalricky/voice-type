@@ -36,7 +36,7 @@ struct SparkleConfigTests {
         #expect(enableAutoChecks == true, "SUEnableAutomaticChecks must be true in Info.plist")
     }
 
-    @Test(.disabled("Enable once a real Sparkle EdDSA key is generated via generate_keys and placed in Info.plist — see docs/RELEASE_SETUP.md"))
+    @Test
     func infoPlistContainsSUPublicEDKey() throws {
         let publicKey = Self.infoPlist["SUPublicEDKey"] as? String
         #expect(publicKey != nil, "SUPublicEDKey key must exist in Info.plist")
