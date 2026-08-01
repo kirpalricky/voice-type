@@ -148,6 +148,8 @@ struct AboutSettingsTab: View {
 
     @State private var diagnosticLoggingEnabled = DiagnosticLogger.shared.isEnabled
     @State private var showingClearLogConfirmation = false
+    @State private var crashReportingEnabled = CrashReportingConsentManager.shared.state == .enabled
+    @State private var showingLastReportAlert = false
 
     var body: some View {
         Form {
@@ -186,6 +188,34 @@ struct AboutSettingsTab: View {
                     }
                 }
                 .padding(.top, 2)
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                Toggle("Enable crash & error reporting", isOn: $crashReportingEnabled)
+                    .onChange(of: crashReportingEnabled) { _, newValue in
+                        if newValue {
+                            CrashReportingConsentManager.shared.enableReporting()
+                        } else {
+                            CrashReportingConsentManager.shared.disableReporting()
+                        }
+                    }
+                Text("Sends anonymized crash and error reports to help improve Yapboard. No transcript or personal content is ever included.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if let lastReport = CrashReportingConsentManager.shared.lastSentEventSummary {
+                    Button("View Last Report Sent") {
+                        showingLastReportAlert = true
+                    }
+                    .font(.caption)
+                    .padding(.top, 2)
+                    .alert("Last Report", isPresented: $showingLastReportAlert) {
+                        Button("OK", role: .cancel) {}
+                    } message: {
+                        Text(lastReport)
+                    }
+                }
             }
             .confirmationDialog(
                 "Clear the diagnostics log?",

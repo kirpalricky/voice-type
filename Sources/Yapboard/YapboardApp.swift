@@ -6,6 +6,63 @@ import Combine
 import Sparkle
 import Observation
 import AppKit
+import Sentry
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var consentNotificationObserver: NSObjectProtocol?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Check if we should show consent dialog at launch
+        // (e.g., after a crash on previous run, or held events from non-fatal errors)
+        if CrashReportingConsentManager.shared.shouldShowConsentDialog {
+            showCrashReportingConsentDialog()
+        }
+
+        // Observe notification for mid-session consent prompt (triggered by first non-fatal error)
+        consentNotificationObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("com.yapboard.crashReportingConsentPromptNeeded"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.showCrashReportingConsentDialog()
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        ErrorReporter.shared.flush()
+
+        // Clean up observer
+        if let observer = consentNotificationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    private func showCrashReportingConsentDialog() {
+        let alert = NSAlert()
+        alert.messageText = "Yapboard hit a problem."
+        alert.informativeText = "Help improve it by sending anonymized crash & error reports? No transcript or personal content is ever included."
+        alert.addButton(withTitle: "Enable Reporting")
+        alert.addButton(withTitle: "No Thanks")
+        alert.alertStyle = .informational
+
+        // Ensure the alert appears on top of other windows
+        NSApp.activate(ignoringOtherApps: true)
+
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            // User clicked "Enable Reporting"
+            CrashReportingConsentManager.shared.enableReporting()
+            DiagnosticLogger.shared.log("Crash reporting consent: ENABLED")
+        case .alertSecondButtonReturn:
+            // User clicked "No Thanks"
+            CrashReportingConsentManager.shared.disableReporting()
+            DiagnosticLogger.shared.log("Crash reporting consent: DISABLED")
+        default:
+            break
+        }
+    }
+}
 
 @Observable
 final class UpdaterViewModel: NSObject {
@@ -34,6 +91,8 @@ final class UpdaterViewModel: NSObject {
 
 @main
 struct YapboardApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     @State private var appState = AppState()
     @State private var audioRecorder = AudioRecorder()
     @State private var transcriber = Transcriber()
@@ -49,6 +108,12 @@ struct YapboardApp: App {
     private let logger = OSLog(subsystem: "com.yapboard.app", category: "YapboardApp")
 
     init() {
+        SentryConfig.start()
+
+        // Initialize crash context with memory info and permissions
+        CrashContext.updateMemoryContext()
+        CrashContext.updatePermissionsContext()
+
         // Assigning through the property name (`self.foo = ...`) inside init() does not
         // reliably install the value into @State's real backing storage — reads of the same
         // property later in this same init(), or from closures capturing self here, can see

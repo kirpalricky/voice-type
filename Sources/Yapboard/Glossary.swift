@@ -68,6 +68,7 @@ final class GlossaryStore {
             }
         } catch {
             os_log("Failed to load glossary: %@", log: self.logger, type: .error, error.localizedDescription)
+            ErrorReporter.shared.report(error, site: "GlossaryStore.load")
             // On error, seed with examples
             seedExampleEntries()
         }

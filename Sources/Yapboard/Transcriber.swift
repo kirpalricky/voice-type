@@ -121,6 +121,9 @@ actor Transcriber {
         } catch {
             DiagnosticLogger.shared.log("Transcriber.transcribe() failed: \(error.localizedDescription)")
             os_log("Transcription failed: %@", log: self.logger, type: .error, error.localizedDescription)
+            // Synthesize a sanitized error to avoid leaking transcribed text in telemetry
+            let sanitizedError = NSError(domain: "com.yapboard.transcriber", code: 2001, userInfo: [NSLocalizedDescriptionKey: "Transcription failed: \(type(of: error))"])
+            ErrorReporter.shared.report(sanitizedError, site: "Transcriber.transcribe")
             throw TranscriberError.transcriptionFailed(error.localizedDescription)
         }
     }
