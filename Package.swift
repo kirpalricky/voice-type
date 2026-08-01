@@ -19,6 +19,10 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
                 .product(name: "Sparkle", package: "Sparkle")
+            ],
+            exclude: [
+                "Resources/AppIcon.icns",
+                "Resources/Info.plist"
             ]
         ),
         .testTarget(
