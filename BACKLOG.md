@@ -2,25 +2,7 @@
 
 ## Open (stack ranked)
 
-1. **Reprocess history entries from raw audio.** `HistoryStore`
-  ([HistoryStore.swift](Sources/Yapboard/HistoryStore.swift)) already
-  saves the source audio per entry (`audioFileName`, `audioURL(for:)`),
-  but there's no way to re-run transcription/polishing on it after the
-  fact. Useful when we ship an ASR or `Enhancer` prompt change and want
-  better output for past recordings without re-recording:
-  - Add a "Reprocess" action in the History browser (`HistoryStore` +
-    its UI) that re-runs the saved audio through
-    `TranscriptionCoordinator` (transcription, then polishing) and
-    updates the entry's `rawTranscript` / `polishedTranscript` in
-    place (or appends a new version, TBD).
-  - Handle entries with no saved audio (`audioFileName == nil`) —
-    disable the action or show why it's unavailable.
-  - Consider a bulk "reprocess all" for after a model/prompt upgrade.
-  - **Why P1:** compounds every future ASR/Enhancer quality
-    improvement onto past recordings, but best done once the polishing
-    pipeline (currently under active iteration) settles down.
-
-2. **Homebrew cask ships with `sha256 :no_check`.**
+1. **Homebrew cask ships with `sha256 :no_check`.**
    ([Casks/yapboard.rb](https://github.com/kirpalricky/homebrew-yapboard/blob/main/Casks/yapboard.rb)
    in the tap repo) — placeholder until the first real release exists to
    hash. After running `scripts/release.sh` for the first time, compute
@@ -29,7 +11,7 @@
    cut yet) but must happen before the first `brew install` — `:no_check`
    permanently disables integrity verification if left in place.
 
-3. **No CI-driven release pipeline; `scripts/release.sh` only runs
+2. **No CI-driven release pipeline; `scripts/release.sh` only runs
    locally.** `.github/workflows/ci.yml` still only does `swift build` /
    `swift test` on push/PR — nothing runs `scripts/release.sh`, so cutting
    a release is entirely manual on one machine. Also no lint/static
@@ -40,7 +22,7 @@
    living in CI secrets, given it's irreplaceable once installed users
    depend on it).
 
-4. **No crash reporting or telemetry.** Only the local, user-toggled
+3. **No crash reporting or telemetry.** Only the local, user-toggled
    `DiagnosticLogger` ([DiagnosticLogger.swift](Sources/Yapboard/DiagnosticLogger.swift))
    exists — there's no way to learn about a crash or failure in the field
    unless a user notices and manually sends the log file. Worth
@@ -48,14 +30,14 @@
    the app has a real distribution path (GitHub Releases + Homebrew)
    beyond just the dev machine.
 
-5. **No automated dependency vulnerability scanning.** `Package.resolved`
+4. **No automated dependency vulnerability scanning.** `Package.resolved`
    pins exact revisions for `FluidAudio`, `KeyboardShortcuts`, and
    `Sparkle`, but nothing (e.g. Dependabot/Renovate) flags known
    advisories against them. Low effort to add (a `.github/dependabot.yml`
    for the Swift package ecosystem) once GitHub's SPM support for it is
    confirmed adequate.
 
-6. **Sparkle appcast only ever holds one `<item>`.**
+5. **Sparkle appcast only ever holds one `<item>`.**
    [scripts/release.sh](scripts/release.sh) does `rm -rf "$RELEASE_DIR"`
    before every run, so `generate_appcast` only ever sees the single zip
    just built — no version history, no delta updates, and no persisted
@@ -65,6 +47,36 @@
    `release/` each time).
 
 ## Done
+
+- Reprocess history entries from raw audio. `HistoryStore.updateEntry()`
+  overwrites `raw.txt`/`polished.txt` in place (same id/folder/timestamp),
+  race-safe against concurrent delete/prune via `entryNoLongerExists`. New
+  `AudioDecoder.swift` decodes saved `.m4a`/`.caf` back to 16kHz mono
+  Float32 for re-feeding into the ASR model (looped `AVAudioConverter`
+  calls so resampling can't silently truncate). Transcribe→vocab-match→
+  polish sequence extracted into `TranscriptionPipeline.swift`, shared
+  between live recording and reprocessing. `HistoryReprocessor.swift` adds
+  guards a live recording doesn't need: refuses to run while a model
+  download is in flight (`isModelLoading`), rejects empty/near-empty
+  decoded audio before it can blank out a transcript, and refuses to
+  overwrite a previously-genuinely-polished transcript with an
+  unpolished/empty result (`emptyResult`/polish-downgrade guards) rather
+  than silently destroying the only copy. Settings UI: reprocess button
+  per History row (hidden when no saved audio), spinner + single-in-flight
+  enforcement and error alert state hoisted to `HistorySettingsTab` (not
+  row-local, since rows recompute on debounced search). Reviewed by
+  `opus-consultant` before merge; findings addressed in a follow-up
+  commit. 144 tests pass.
+
+  **Known limitations (not fixed, low severity, flagged in review):** no
+  friendly error surfaced if a model preload failed at launch and the
+  transcriber was never initialized (reprocess just surfaces the raw
+  "not initialized" error rather than a fallback like "record something
+  first, or restart") — low priority since this is a rare launch-time
+  edge case, not the common path. `updateEntry`'s two-file write
+  (`raw.txt`/`polished.txt`) isn't atomic — a failure between the two
+  writes (disk full, permissions) can leave the in-memory entry and
+  on-disk files briefly mismatched until the next full rescan.
 
 - History storage scale-up, Stage 6 — Sortable folder names. New entries'
   folders are named `<yyyyMMdd-HHmmss>-<uuid>` (via a thread-safe
