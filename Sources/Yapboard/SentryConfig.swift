@@ -77,6 +77,19 @@ enum SentryConfig {
                 redactedEvent.context = mutableContext
             }
 
+            // Strip user identity and IP address unconditionally.
+            // This must happen regardless of consent state to prevent leaking stable identifiers
+            // and IP addresses in events held in the holding-pen or dropped events.
+            redactedEvent.user = nil
+
+            // Remove identity-related tags.
+            if let tags = redactedEvent.tags {
+                // Filter out tags that carry identity information.
+                let identityTagKeys = Set(["user.id"])
+                let filteredTags = tags.filter { !identityTagKeys.contains($0.key) }
+                redactedEvent.tags = filteredTags.isEmpty ? nil : filteredTags
+            }
+
             // Gate by consent state.
             switch CrashReportingConsentManager.shared.state {
             case .disabled:
