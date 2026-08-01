@@ -139,12 +139,10 @@ struct HistoryReprocessorTests {
             sampleRate: 16000
         )
 
-        // Mock transcriber that returns empty, simulating empty audio
         let transcriber = FakeTranscriber()
-        transcriber.transcribeResult = ""
-
         let polisher = FakePolisher()
 
+        // Mock the decode function to return empty audio
         let reprocessor = createReprocessor(
             historyStore: historyStore,
             appState: appState,
@@ -153,10 +151,25 @@ struct HistoryReprocessorTests {
             glossaryStore: glossaryStore
         )
 
-        // We need to mock an empty decode, which is tricky. For now, we'll test the check itself
-        // by verifying the guard is in place - the real test would require mocking AudioDecoder
-        // For a simpler approach, let's just verify the logic is there by checking error propagation
-        #expect(true) // Placeholder - full test would mock AudioDecoder
+        // Create a reprocessor with mocked decode that returns empty
+        let mockReprocessor = HistoryReprocessor(
+            historyStore: historyStore,
+            appState: appState,
+            transcriber: transcriber,
+            polisher: polisher,
+            glossaryStore: glossaryStore,
+            decodeAudio: { _ in [] }
+        )
+
+        do {
+            try await mockReprocessor.reprocess(entry)
+            #expect(Bool(false), "Should have thrown emptyAudio")
+        } catch let error as ReprocessError {
+            #expect(error == .emptyAudio)
+        }
+
+        // Verify entry was NOT updated
+        #expect(historyStore.entries[0].rawTranscript == "test")
     }
 
     @Test
@@ -283,6 +296,52 @@ struct HistoryReprocessorTests {
 
         // Verify entry was NOT updated
         #expect(historyStore.entries[0].rawTranscript == "test")
+    }
+
+    @Test
+    func reprocess_ThrowsEmptyResult() async throws {
+        let tempDir = createTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let appState = AppState()
+        appState.isModelLoading = false
+
+        let historyStore = HistoryStore(baseDirectoryOverride: tempDir)
+        let glossaryStore = GlossaryStore(baseDirectoryOverride: tempDir)
+
+        let entry = historyStore.addEntry(
+            rawTranscript: "hello world",
+            polishedTranscript: "Hello World.",
+            audioSamples: Self.createSineWaveAudio(),
+            sampleRate: 16000
+        )
+
+        let transcriber = FakeTranscriber()
+        // Mock transcriber that returns empty result from re-transcription
+        transcriber.transcribeResult = ""
+
+        let polisher = FakePolisher()
+        polisher.polishResult = ""
+
+        let reprocessor = HistoryReprocessor(
+            historyStore: historyStore,
+            appState: appState,
+            transcriber: transcriber,
+            polisher: polisher,
+            glossaryStore: glossaryStore,
+            decodeAudio: { _ in Self.createSineWaveAudio() }
+        )
+
+        do {
+            try await reprocessor.reprocess(entry)
+            #expect(Bool(false), "Should have thrown emptyResult")
+        } catch let error as ReprocessError {
+            #expect(error == .emptyResult)
+        }
+
+        // Verify entry was NOT updated
+        #expect(historyStore.entries[0].rawTranscript == "hello world")
+        #expect(historyStore.entries[0].polishedTranscript == "Hello World.")
     }
 
     @Test

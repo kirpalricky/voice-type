@@ -19,15 +19,16 @@ enum AudioDecoder {
         }
 
         // Conversion needed: resample and/or convert channels
-        guard let converter = AVAudioConverter(from: processingFormat, to: targetFormat) else {
-            throw AudioDecoderError.converterUnavailable
-        }
-
-        return try convertAudioWithLoop(file: file, converter: converter, sourceFormat: processingFormat, targetFormat: targetFormat)
+        return try convertAudioWithLoop(file: file, sourceFormat: processingFormat, targetFormat: targetFormat)
     }
 
     /// Extract samples directly from a file that's already in the target format.
     private static func extractSamplesDirectly(file: AVAudioFile, format: AVAudioFormat) throws -> [Float] {
+        // Guard against corrupt files with invalid length
+        guard file.length >= 0, file.length <= Int64(UInt32.max) else {
+            throw AudioDecoderError.bufferAllocationFailed
+        }
+
         let frameCount = AVAudioFrameCount(file.length)
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
@@ -46,23 +47,36 @@ enum AudioDecoder {
 
     /// Convert audio using a loop to ensure the entire file is converted, not just partial content.
     /// The block-based AVAudioConverter API only guarantees full consumption across repeated invocations.
-    private static func convertAudioWithLoop(file: AVAudioFile, converter: AVAudioConverter, sourceFormat: AVAudioFormat, targetFormat: AVAudioFormat) throws -> [Float] {
+    private static func convertAudioWithLoop(file: AVAudioFile, sourceFormat: AVAudioFormat, targetFormat: AVAudioFormat) throws -> [Float] {
+        // Guard against corrupt files with invalid length
+        guard file.length >= 0, file.length <= Int64(UInt32.max) else {
+            throw AudioDecoderError.bufferAllocationFailed
+        }
+
         let sourceFrameCount = AVAudioFrameCount(file.length)
 
+        // Read input file into a mono buffer to handle multi-channel files
+        // AVAudioFile automatically downmixes/upmixes when reading into a different channel count
+        let monoReadFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sourceFormat.sampleRate, channels: 1, interleaved: false)!
+
+        guard let fullInputBuffer = AVAudioPCMBuffer(pcmFormat: monoReadFormat, frameCapacity: sourceFrameCount) else {
+            throw AudioDecoderError.bufferAllocationFailed
+        }
+        try file.read(into: fullInputBuffer)
+
+        // Create converter from mono read format to target format
+        guard let converter = AVAudioConverter(from: monoReadFormat, to: targetFormat) else {
+            throw AudioDecoderError.converterUnavailable
+        }
+
         // Calculate expected output frame count after resampling
-        let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
+        let ratio = targetFormat.sampleRate / monoReadFormat.sampleRate
         let expectedOutputFrames = Int(Double(sourceFrameCount) * ratio)
         let estimatedCapacity = expectedOutputFrames + 1000 // Add slack for safety
 
         // Accumulate output samples as we convert
         var allOutputSamples: [Float] = []
         allOutputSamples.reserveCapacity(estimatedCapacity)
-
-        // Read input file into a buffer for the input provider
-        guard let fullInputBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: sourceFrameCount) else {
-            throw AudioDecoderError.bufferAllocationFailed
-        }
-        try file.read(into: fullInputBuffer)
 
         // Track position in the input buffer for the input provider
         var inputPosition: AVAudioFramePosition = 0
@@ -82,7 +96,7 @@ enum AudioDecoder {
                     let framesToRead = min(AVAudioFrameCount(inNumPackets), remainingFrames)
 
                     // Create a view into the input buffer at the current position
-                    guard let tempBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: framesToRead) else {
+                    guard let tempBuffer = AVAudioPCMBuffer(pcmFormat: monoReadFormat, frameCapacity: framesToRead) else {
                         outStatus.pointee = .endOfStream
                         return nil
                     }

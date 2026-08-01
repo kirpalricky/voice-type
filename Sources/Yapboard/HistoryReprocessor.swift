@@ -10,19 +10,22 @@ final class HistoryReprocessor {
     private let polisher: Polishing
     private let glossaryStore: GlossaryStore
     private let logger: OSLog
+    private let decodeAudio: (URL) throws -> [Float]
 
     init(
         historyStore: HistoryStore,
         appState: AppState,
         transcriber: Transcribing,
         polisher: Polishing,
-        glossaryStore: GlossaryStore
+        glossaryStore: GlossaryStore,
+        decodeAudio: @escaping (URL) throws -> [Float] = AudioDecoder.decodeTo16kMono
     ) {
         self.historyStore = historyStore
         self.appState = appState
         self.transcriber = transcriber
         self.polisher = polisher
         self.glossaryStore = glossaryStore
+        self.decodeAudio = decodeAudio
         self.logger = OSLog(subsystem: "com.yapboard.reprocess", category: "HistoryReprocessor")
     }
 
@@ -45,8 +48,8 @@ final class HistoryReprocessor {
         }
 
         // Decode audio off the main actor
-        let audioSamples = try await Task.detached(priority: .userInitiated) {
-            try AudioDecoder.decodeTo16kMono(fileURL: audioURL)
+        let audioSamples = try await Task.detached(priority: .userInitiated) { [decodeAudio = self.decodeAudio] in
+            try decodeAudio(audioURL)
         }.value
 
         // Guard against empty audio
@@ -59,12 +62,29 @@ final class HistoryReprocessor {
         let glossaryEntries = glossaryStore.entries
 
         // Run transcription pipeline
-        let pipelineResult = try await TranscriptionPipeline.run(
-            audioSamples: audioSamples,
-            transcriber: transcriber,
-            polisher: polisher,
-            glossary: glossaryEntries
-        )
+        let pipelineResult: TranscriptionPipeline.Result
+        do {
+            pipelineResult = try await TranscriptionPipeline.run(
+                audioSamples: audioSamples,
+                transcriber: transcriber,
+                polisher: polisher,
+                glossary: glossaryEntries
+            )
+        } catch let error as NSError {
+            // Check if this is a "transcriber not initialized" error and provide better context
+            if error.localizedDescription.lowercased().contains("not initialized") {
+                os_log("Reprocess failed: Transcriber not initialized (model not loaded) for entry %@", log: self.logger, type: .debug, entry.id.uuidString)
+                throw ReprocessError.modelNotLoaded
+            }
+            throw error
+        }
+
+        // Guard against empty re-transcription that would wipe a good transcript
+        if pipelineResult.rawTranscript.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty &&
+           !entry.rawTranscript.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
+            os_log("Reprocess blocked: re-transcription is empty while existing transcript is not, for entry %@", log: self.logger, type: .debug, entry.id.uuidString)
+            throw ReprocessError.emptyResult
+        }
 
         // Check for polish downgrade: if the new polished output is identical to raw,
         // but the original was polished (polished != raw), reject the update to avoid
@@ -93,6 +113,8 @@ enum ReprocessError: LocalizedError {
     case emptyAudio
     case modelBusy
     case polishDowngrade
+    case emptyResult
+    case modelNotLoaded
 
     var errorDescription: String? {
         switch self {
@@ -104,6 +126,10 @@ enum ReprocessError: LocalizedError {
             return "Speech model is still loading, try again shortly"
         case .polishDowngrade:
             return "Reprocessing produced no polished output; entry left unchanged"
+        case .emptyResult:
+            return "Reprocessing produced no transcript; entry left unchanged"
+        case .modelNotLoaded:
+            return "Speech model isn't loaded. Try recording something first, or restart the app"
         }
     }
 }

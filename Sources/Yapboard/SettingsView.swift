@@ -438,7 +438,6 @@ struct HistorySettingsTab: View {
                                 HistoryRow(
                                     entry: entry,
                                     historyStore: historyStore,
-                                    historyReprocessor: historyReprocessor,
                                     isReprocessing: reprocessingEntryID == entry.id,
                                     onReprocess: { startReprocess(entry) }
                                 )
@@ -539,7 +538,6 @@ struct HistorySettingsTab: View {
 private struct HistoryRow: View {
     let entry: HistoryEntry
     var historyStore: HistoryStore
-    var historyReprocessor: HistoryReprocessor
     var isReprocessing: Bool = false
     var onReprocess: () -> Void = {}
 
