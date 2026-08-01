@@ -112,6 +112,30 @@ if ! [ -n "$(find "$BUNDLE_PATH" -type f -print -quit)" ]; then
     exit 1
 fi
 
-codesign --force --deep -s - "$APP"
+# Copy Sparkle.framework into Contents/Frameworks
+mkdir -p "$APP/Contents/Frameworks"
+SPARKLE_FRAMEWORK=$(find .build/artifacts -iname "Sparkle.framework" -path "*macos*" | head -1)
+if [[ -n "$SPARKLE_FRAMEWORK" ]]; then
+    cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/"
+fi
+
+# Ad-hoc code signing (inside-out for nested executables)
+if [[ -d "$APP/Contents/Frameworks/Sparkle.framework" ]]; then
+    # Sign nested executables inside Sparkle.framework first (inside-out signing)
+    find "$APP/Contents/Frameworks/Sparkle.framework" -type f -perm +111 -exec codesign --force -s - {} \;
+    codesign --force -s - "$APP/Contents/Frameworks/Sparkle.framework"
+
+    # Add rpath before signing the main app
+    install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/VoiceType"
+fi
+
+# Sign the main app last
+codesign --force -s - "$APP"
+
+# Warn if SUPublicEDKey is empty
+PUBLIC_KEY=$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$PLIST" 2>/dev/null || echo "")
+if [[ -z "$PUBLIC_KEY" ]]; then
+    echo "WARNING: SUPublicEDKey is empty — this build cannot receive Sparkle auto-updates" >&2
+fi
 
 echo "Packaged $APP"
