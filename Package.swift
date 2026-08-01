@@ -10,7 +10,8 @@ let package = Package(
         .package(url: "https://github.com/FluidInference/FluidAudio", "0.15.0"..<"0.16.0"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", "1.7.0"..<"1.10.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
-        .package(url: "https://github.com/apple/swift-testing.git", from: "0.8.0")
+        .package(url: "https://github.com/apple/swift-testing.git", from: "0.8.0"),
+        .package(url: "https://github.com/getsentry/sentry-cocoa", "8.36.0"..<"8.37.0")
     ],
     targets: [
         .executableTarget(
@@ -18,11 +19,13 @@ let package = Package(
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Sentry", package: "sentry-cocoa")
             ],
             exclude: [
                 "Resources/AppIcon.icns",
-                "Resources/Info.plist"
+                "Resources/Info.plist",
+                "Secrets.swift.example"
             ]
         ),
         .testTarget(

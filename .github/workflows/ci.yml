@@ -16,6 +16,10 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
 
+      - name: Materialize Secrets.swift from template
+        run: |
+          [ -f Sources/Yapboard/Secrets.swift ] || cp Sources/Yapboard/Secrets.swift.example Sources/Yapboard/Secrets.swift
+
       - name: Cache SPM build
         uses: actions/cache@v4
         with:

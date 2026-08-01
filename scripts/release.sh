@@ -119,6 +119,14 @@ swift build -c release
 ARCH_DIR=".build/arm64-apple-macosx/release"
 APP_PATH="$ARCH_DIR/$APP_BUNDLE"
 
+# Verify dSYM was produced
+DSYM_PATH="$ARCH_DIR/Yapboard.dSYM"
+if [[ ! -d "$DSYM_PATH" ]]; then
+    echo "ERROR: dSYM not found at $DSYM_PATH" >&2
+    echo "       Release builds should automatically produce dSYM files." >&2
+    exit 1
+fi
+
 echo "==> Assembling .app bundle"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
@@ -163,6 +171,33 @@ codesign --force -s - "$APP_BUNDLE"
 echo "==> Preparing release directory"
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
+
+echo "==> Archiving dSYM and binary for version $VERSION"
+SYMBOLS_DIR="./release-symbols/$VERSION"
+rm -rf "$SYMBOLS_DIR"
+mkdir -p "$SYMBOLS_DIR"
+
+# Copy the binary (post-signing) and dSYM to the symbols directory
+cp "$APP_BUNDLE/Contents/MacOS/Yapboard" "$SYMBOLS_DIR/Yapboard"
+cp -R "$DSYM_PATH" "$SYMBOLS_DIR/Yapboard.dSYM"
+
+# Verify UUIDs match between binary and dSYM
+BINARY_UUID=$(dwarfdump --uuid "$SYMBOLS_DIR/Yapboard" 2>/dev/null | head -1 | awk '{print $2}')
+DSYM_UUID=$(dwarfdump --uuid "$SYMBOLS_DIR/Yapboard.dSYM" 2>/dev/null | head -1 | awk '{print $2}')
+
+if [[ -z "$BINARY_UUID" || -z "$DSYM_UUID" ]]; then
+    echo "ERROR: Could not extract UUID from binary or dSYM" >&2
+    exit 1
+fi
+
+if [[ "$BINARY_UUID" != "$DSYM_UUID" ]]; then
+    echo "ERROR: UUID mismatch between binary ($BINARY_UUID) and dSYM ($DSYM_UUID)" >&2
+    exit 1
+fi
+
+echo "    Archived to: $SYMBOLS_DIR"
+echo "    Binary UUID: $BINARY_UUID"
+echo "    dSYM UUID:   $DSYM_UUID"
 
 echo "==> Creating zip archive: $ZIP_FILE"
 ditto -c -k --keepParent --sequesterRsrc "$APP_BUNDLE" "$ZIP_FILE"

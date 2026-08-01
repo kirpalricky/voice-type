@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import Observation
 import OSLog
+import Sentry
 
 /// A single past recording: its transcripts and (optionally) the saved audio file.
 struct HistoryEntry: Identifiable {
@@ -162,6 +163,7 @@ final class HistoryStore {
                             writeIndex()
                         }
                         os_log("Loaded %d history entries from cache", log: logger, type: .info, entries.count)
+                        updateCrashContext()
                         return
                     }
                 } catch {
@@ -266,6 +268,8 @@ final class HistoryStore {
         } else {
             writeIndex(observedFolderNames: observedFolderNames)
         }
+
+        updateCrashContext()
     }
 
     nonisolated private static func scanDirectory(_ recordingsDir: URL, fileManager: FileManager, logger: OSLog) -> (entries: [HistoryEntry], folderNames: [String]) {
@@ -354,6 +358,7 @@ final class HistoryStore {
             os_log("Loaded %d history entries from disk", log: logger, type: .info, loadedEntries.count)
         } catch {
             os_log("Failed to scan directory: %@", log: logger, type: .error, error.localizedDescription)
+            ErrorReporter.shared.report(error, site: "HistoryStore.scanDirectory")
         }
 
         return (loadedEntries, observedFolderNames)
@@ -407,6 +412,7 @@ final class HistoryStore {
             didPersist = true
         } catch {
             os_log("Failed to save entry: %@", log: logger, type: .error, error.localizedDescription)
+            ErrorReporter.shared.report(error, site: "HistoryStore.addEntry")
             // Clean up partial folder on transcript/metadata failure to prevent orphaned entries
             try? fileManager.removeItem(at: entryFolder)
         }
@@ -483,11 +489,19 @@ final class HistoryStore {
         return fileManager.fileExists(atPath: url.path) ? url : nil
     }
 
+    /// Updates crash context with current history entry count.
+    private func updateCrashContext() {
+        SentrySDK.configureScope { scope in
+            scope.setContext(value: ["entryCount": self.entries.count], key: "history")
+        }
+    }
+
     private func deleteFolder(for entry: HistoryEntry) {
         do {
             try fileManager.removeItem(at: entry.folderURL)
         } catch {
             os_log("Failed to delete entry folder %@: %@", log: logger, type: .error, entry.folderURL.path, error.localizedDescription)
+            ErrorReporter.shared.report(error, site: "HistoryStore.deleteFolder")
         }
     }
 
@@ -532,6 +546,7 @@ final class HistoryStore {
             try indexData.write(to: indexURL, options: .atomic)
         } catch {
             os_log("Failed to write index cache: %@", log: logger, type: .error, error.localizedDescription)
+            ErrorReporter.shared.report(error, site: "HistoryStore.writeIndex")
         }
     }
 

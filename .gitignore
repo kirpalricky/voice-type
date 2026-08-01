@@ -4,4 +4,6 @@
 .DS_Store
 .worktrees
 release/
+release-symbols/
 Yapboard.app
+Sources/Yapboard/Secrets.swift

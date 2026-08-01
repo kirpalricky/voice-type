@@ -94,6 +94,8 @@ actor AudioRecorder {
             }
             DiagnosticLogger.shared.log("AudioRecorder.startRecording() Mic delivered no audio on attempt \(attempt), retrying")
             os_log("Mic delivered no audio on attempt %d, retrying", log: self.logger, type: .error, attempt)
+            let noAudioError = NSError(domain: "com.yapboard.audiorecorder", code: 3001 + attempt, userInfo: [NSLocalizedDescriptionKey: "Mic delivered no audio on attempt \(attempt)"])
+            ErrorReporter.shared.report(noAudioError, site: "AudioRecorder.startRecording")
         }
         DiagnosticLogger.shared.log("AudioRecorder.startRecording() all retries exhausted, throwing formatNotAvailable")
         throw AudioRecorderError.formatNotAvailable

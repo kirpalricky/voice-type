@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import OSLog
+import Sentry
 
 @MainActor
 final class TranscriptionCoordinator {
@@ -55,10 +56,15 @@ final class TranscriptionCoordinator {
             DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() succeeded")
         } catch {
             os_log("Model preload failed: %@", log: self.logger, type: .error, error.localizedDescription)
+            ErrorReporter.shared.report(error, site: "TranscriptionCoordinator.preloadModel")
             DiagnosticLogger.shared.log("TranscriptionCoordinator.preloadModel() failed: \(error)")
         }
         appState.isModelLoading = false
         appState.modelLoadStatus = ""
+        // Update model load state in crash context
+        SentrySDK.configureScope { scope in
+            scope.setContext(value: ["loadState": "complete"], key: "model")
+        }
     }
 
     func startRecording() async {
@@ -70,6 +76,8 @@ final class TranscriptionCoordinator {
         guard await hasMicrophoneAccess() else {
             DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() - mic access denied")
             os_log("Microphone access not granted", log: self.logger, type: .error)
+            let micAccessError = NSError(domain: "com.yapboard.app", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Microphone access not granted"])
+            ErrorReporter.shared.report(micAccessError, site: "TranscriptionCoordinator.startRecording")
             appState.processingError = "Microphone access is required. Enable it in System Settings > Privacy & Security > Microphone."
             appState.showingResultPanel = true
             return
@@ -79,6 +87,9 @@ final class TranscriptionCoordinator {
             appState.isRecording = true
             appState.processingError = nil
             appState.resetLevels()
+            updateCrashContext()
+            // Record memory usage at high-memory-pressure moment (recording start)
+            CrashContext.updateMemoryContext()
             DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() calling audioRecorder.startRecording()")
             try await audioRecorder.startRecording(onBands: { [appState] bands in
                 Task { @MainActor in
@@ -89,9 +100,28 @@ final class TranscriptionCoordinator {
         } catch {
             DiagnosticLogger.shared.log("TranscriptionCoordinator.startRecording() audioRecorder.startRecording() THREW: \(error)")
             os_log("Failed to start recording: %@", log: self.logger, type: .error, error.localizedDescription)
+            ErrorReporter.shared.report(error, site: "TranscriptionCoordinator.startRecording")
             appState.isRecording = false
             appState.processingError = "Couldn't start recording: \(error.localizedDescription)"
             appState.showingResultPanel = true
+        }
+    }
+
+    /// Updates crash context with current pipeline state.
+    private func updateCrashContext() {
+        let stage: String
+        if appState.isRecording {
+            stage = "recording"
+        } else if appState.isProcessing {
+            stage = "processing"
+        } else {
+            stage = "idle"
+        }
+        SentrySDK.configureScope { scope in
+            scope.setContext(value: [
+                "stage": stage,
+                "recordingInFlight": self.appState.isRecording
+            ], key: "pipeline")
         }
     }
 
@@ -108,6 +138,8 @@ final class TranscriptionCoordinator {
                     continuation.resume(returning: granted)
                 }
             }
+            // Record final permission state after TCC prompt resolves
+            CrashContext.updatePermissionsContext()
             if granted {
                 // The HAL input route isn't always live the instant the TCC prompt resolves;
                 // give it a moment before the caller starts the engine.
@@ -129,9 +161,12 @@ final class TranscriptionCoordinator {
             let audioSamples = try await audioRecorder.stopRecording()
             DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() got \(audioSamples.count) samples")
             appState.isRecording = false
+            updateCrashContext()
 
             guard !audioSamples.isEmpty else {
                 os_log("No audio samples captured", log: self.logger, type: .error)
+                let noAudioError = NSError(domain: "com.yapboard.app", code: 1002, userInfo: [NSLocalizedDescriptionKey: "No audio samples captured"])
+                ErrorReporter.shared.report(noAudioError, site: "TranscriptionCoordinator.stopRecordingAndTranscribe")
                 appState.processingError = "No audio was captured. Check your microphone and try again."
                 appState.showingResultPanel = true
                 return
@@ -171,6 +206,8 @@ final class TranscriptionCoordinator {
             // Check if polishing failed
             if !pipelineResult.polishingSucceeded {
                 os_log("Polishing failed; falling back to raw transcript", log: self.logger, type: .error)
+                let polishingError = NSError(domain: "com.yapboard.app", code: 1003, userInfo: [NSLocalizedDescriptionKey: "Polishing failed; falling back to raw transcript"])
+                ErrorReporter.shared.report(polishingError, site: "TranscriptionCoordinator.stopRecordingAndTranscribe")
                 DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() polishing failed, using unpolished transcript as fallback")
                 appState.polishingFailed = true
             }
@@ -205,6 +242,16 @@ final class TranscriptionCoordinator {
         } catch {
             DiagnosticLogger.shared.log("TranscriptionCoordinator.stopRecordingAndTranscribe() CAUGHT error: \(error)")
             os_log("Transcription error: %@", log: self.logger, type: .error, error.localizedDescription)
+
+            // If the error already went through Transcriber's sanitization path,
+            // don't report it again unsanitized. Report a fixed sanitized message instead.
+            if error is TranscriberError {
+                let sanitizedError = NSError(domain: "com.yapboard.app", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Transcription pipeline error: \(type(of: error))"])
+                ErrorReporter.shared.report(sanitizedError, site: "TranscriptionCoordinator.stopRecordingAndTranscribe")
+            } else {
+                ErrorReporter.shared.report(error, site: "TranscriptionCoordinator.stopRecordingAndTranscribe")
+            }
+
             appState.isRecording = false
             appState.isProcessing = false
             appState.processingError = error.localizedDescription
