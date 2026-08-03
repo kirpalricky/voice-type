@@ -21,7 +21,7 @@ jobs:
           [ -f Sources/Yapboard/Secrets.swift ] || cp Sources/Yapboard/Secrets.swift.example Sources/Yapboard/Secrets.swift
 
       - name: Cache SPM build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .build
           key: ${{ runner.os }}-${{ github.event.repository.name }}-spm-build-${{ hashFiles('Package.resolved') }}
