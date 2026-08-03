@@ -11,7 +11,7 @@ let package = Package(
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", "1.7.0"..<"1.10.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         .package(url: "https://github.com/apple/swift-testing.git", from: "0.8.0"),
-        .package(url: "https://github.com/getsentry/sentry-cocoa", "8.36.0"..<"8.37.0")
+        .package(url: "https://github.com/getsentry/sentry-cocoa", "8.36.0"..<"10.0.0")
     ],
     targets: [
         .executableTarget(
