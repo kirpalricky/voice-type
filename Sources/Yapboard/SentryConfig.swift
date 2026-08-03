@@ -53,7 +53,6 @@ enum SentryConfig {
         // Disable telemetry collection.
         options.enableAutoSessionTracking = false
         options.tracesSampleRate = 0
-        options.profilesSampleRate = 0
         options.sendDefaultPii = false
         options.enableFileIOTracing = false
 
@@ -130,7 +129,9 @@ enum SentryConfig {
         // Redact exception values.
         if let exceptions = event.exceptions {
             for exception in exceptions {
-                exception.value = PathRedaction.redact(exception.value)
+                if let value = exception.value {
+                    exception.value = PathRedaction.redact(value)
+                }
             }
         }
 
